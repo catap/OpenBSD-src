@@ -36,6 +36,7 @@
 #include <dev/usb/usbdi.h>
 #include <dev/usb/usbdivar.h>
 #include <dev/usb/usb_mem.h>
+#include <dev/usb/usb_quirks.h>
 
 #ifdef UAUDIO_DEBUG
 #define DPRINTF(...)				\
@@ -3771,6 +3772,10 @@ uaudio_match(struct device *parent, void *match, void *aux)
 	if (idesc->bInterfaceClass != UICLASS_AUDIO ||
 	    idesc->bInterfaceSubClass != UISUBCLASS_AUDIOSTREAM)
 		return UMATCH_NONE;
+
+	/* catap's setup hack */
+	if (usbd_get_quirks(arg->device)->uq_flags & UQ_BAD_HID)
+		return (UMATCH_NONE);
 
 	return UMATCH_VENDOR_PRODUCT_CONF_IFACE;
 }
