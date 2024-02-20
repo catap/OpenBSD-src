@@ -161,6 +161,9 @@ const struct usbd_quirk_entry {
  { USB_VENDOR_MICROSOFT, USB_PRODUCT_MICROSOFT_TYPECOVER2,
  	ANY,	{ UQ_ALWAYS_OPEN }},
 
+ /* catap's setup hack */
+ { USB_VENDOR_LG, USB_PRODUCT_LG_ULTRA_FINE_AUDIO,	ANY,	{ UQ_BAD_HID }},
+
  { 0, 0, 0, { 0 } }
 };
 
