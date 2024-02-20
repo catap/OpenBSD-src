@@ -2666,6 +2666,7 @@
 /* LG products */
 #define	USB_PRODUCT_LG_RTL8153	0x9819		/* RTL8153 */
 #define	USB_PRODUCT_LG_RTL8153B	0x9820		/* RTL8153 */
+#define	USB_PRODUCT_LG_ULTRA_FINE_AUDIO	0x9a66		/* LG UltraFine Display Audio */
 
 /* Liebert products */
 #define	USB_PRODUCT_LIEBERT_UPS	0xffff		/* UPS */
