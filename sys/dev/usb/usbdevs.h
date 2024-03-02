@@ -1005,6 +1005,7 @@
 #define	USB_PRODUCT_APPLE_WELLSPRING7_ANSI	0x0262		/* Keyboard/Trackpad */
 #define	USB_PRODUCT_APPLE_WELLSPRING7_ISO	0x0263		/* Keyboard/Trackpad */
 #define	USB_PRODUCT_APPLE_WELLSPRING7_JIS	0x0264		/* Keyboard/Trackpad */
+#define	USB_PRODUCT_APPLE_MAGIC_TRACKPAD2	0x0265		/* Apple Magic Trackpad 2 */
 #define	USB_PRODUCT_APPLE_WELLSPRING9_ANSI	0x0272		/* Keyboard/Trackpad */
 #define	USB_PRODUCT_APPLE_WELLSPRING9_ISO	0x0273		/* Keyboard/Trackpad */
 #define	USB_PRODUCT_APPLE_WELLSPRING9_JIS	0x0274		/* Keyboard/Trackpad */

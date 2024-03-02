@@ -78,8 +78,31 @@ struct ubcmtp_finger {
 	uint16_t	multi;
 } __packed __attribute((aligned(2)));
 
+struct ubcmtp_finger_compact {
+	uint32_t coords;
+	uint8_t touch_major;
+	uint8_t touch_minor;
+	uint8_t size;
+	uint8_t pressure;
+	unsigned int orientation: 3;
+	unsigned int _unknown1: 1;
+	unsigned int id: 4;
+} __packed __attribute((aligned(2)));
+
+union ubcmtp_finger_compact_coords {
+	uint32_t num;
+	struct {
+		signed int x: 13;
+		signed int y: 13;
+		signed int _unknown: 4;
+		signed int state: 2;
+	} __packed __attribute((aligned(2)));
+};
+
 #define UBCMTP_MAX_FINGERS	16
 #define UBCMTP_ALL_FINGER_SIZE	(UBCMTP_MAX_FINGERS * sizeof(struct ubcmtp_finger))
+
+#define UBCMTP_COMPACT_FINGER_SIZE	(UBCMTP_MAX_FINGERS * sizeof(struct ubcmtp_finger_compact))
 
 #define UBCMTP_TYPE1		1
 #define UBCMTP_TYPE1_TPOFF	(13 * sizeof(uint16_t))
@@ -105,6 +128,13 @@ struct ubcmtp_finger {
 #define UBCMTP_TYPE4_TPIFACE	2
 #define UBCMTP_TYPE4_BTOFF	31
 #define UBCMTP_TYPE4_FINGERPAD	(1 * sizeof(uint16_t))
+
+// TODO: ???
+#define UBCMTP_TYPE_MT2U		5
+#define UBCMTP_TYPE_MT2U_TPOFF	12
+#define UBCMTP_TYPE_MT2U_TPLEN	UBCMTP_TYPE_MT2U_TPOFF + UBCMTP_COMPACT_FINGER_SIZE
+#define UBCMTP_TYPE_MT2U_TPIFACE	2
+#define UBCMTP_TYPE_MT2U_BTOFF	1
 
 #define UBCMTP_FINGER_ORIENT	16384
 #define UBCMTP_SN_PRESSURE	45
@@ -307,6 +337,18 @@ static const struct ubcmtp_dev ubcmtp_devices[] = {
 		{ UBCMTP_SN_COORD, -203, 6803 },
 		{ UBCMTP_SN_ORIENT, -UBCMTP_FINGER_ORIENT, UBCMTP_FINGER_ORIENT },
 	},
+	{
+		USB_VENDOR_APPLE,
+		USB_PRODUCT_APPLE_MAGIC_TRACKPAD2,
+		USB_PRODUCT_APPLE_MAGIC_TRACKPAD2,
+		USB_PRODUCT_APPLE_MAGIC_TRACKPAD2,
+		UBCMTP_TYPE_MT2U,
+		{ UBCMTP_SN_PRESSURE, 0, 256 },
+		{ UBCMTP_SN_WIDTH, 0, 2048 },
+		{ UBCMTP_SN_COORD, -3678, 3934 },
+		{ UBCMTP_SN_COORD, -2478, 2587 },
+		{ UBCMTP_SN_ORIENT, -UBCMTP_FINGER_ORIENT, UBCMTP_FINGER_ORIENT },
+	},
 };
 
 static struct wsmouse_param ubcmtp_wsmousecfg[] = {
@@ -481,6 +523,13 @@ ubcmtp_attach(struct device *parent, struct device *self, void *aux)
 		sc->tp_fingerpad = UBCMTP_TYPE4_FINGERPAD;
 		usbd_claim_iface(sc->sc_udev, UBCMTP_TYPE4_TPIFACE);
 		break;
+
+	case UBCMTP_TYPE_MT2U:
+		sc->tp_maxlen = UBCMTP_TYPE_MT2U_TPLEN;
+		sc->tp_offset = UBCMTP_TYPE_MT2U_TPOFF;
+		sc->sc_tp_iface = uaa->ifaces[UBCMTP_TYPE_MT2U_TPIFACE];
+		usbd_claim_iface(sc->sc_udev, UBCMTP_TYPE_MT2U_TPIFACE);
+		break;
 	}
 
 	a.accessops = &ubcmtp_accessops;
@@ -531,7 +580,9 @@ ubcmtp_configure(struct ubcmtp_softc *sc)
 	hw->y_min = sc->dev_type->l_y.min;
 	hw->y_max = sc->dev_type->l_y.max;
 	hw->mt_slots = UBCMTP_MAX_FINGERS;
-	hw->flags = WSMOUSEHW_MT_TRACKING;
+	// TODO: ???
+	if (sc->dev_type->type != UBCMTP_TYPE_MT2U)
+		hw->flags = WSMOUSEHW_MT_TRACKING;
 
 	return wsmouse_configure(sc->sc_wsmousedev,
 	    ubcmtp_wsmousecfg, nitems(ubcmtp_wsmousecfg));
@@ -651,6 +702,12 @@ ubcmtp_raw_mode(struct ubcmtp_softc *sc, int enable)
 	if (sc->dev_type->type == UBCMTP_TYPE3)
 		return (0);
 
+	/* seems that MT2 supports only set, and it similar with TYPE 4 */
+	if (sc->dev_type->type == UBCMTP_TYPE_MT2U) {
+		buf[0] = 2;
+		goto bypass_read;
+	}
+
 	r.bRequest = UR_GET_REPORT;
 	r.bmRequestType = UT_READ_CLASS_INTERFACE;
 	if (sc->dev_type->type < UBCMTP_TYPE4) {
@@ -670,6 +727,7 @@ ubcmtp_raw_mode(struct ubcmtp_softc *sc, int enable)
 		return (err);
 	}
 
+bypass_read:
 	/* toggle magic byte and write everything back */
 	if (sc->dev_type->type < UBCMTP_TYPE4)
 		buf[0] = (enable ? UBCMTP_WELLSPRING_MODE_RAW :
@@ -779,6 +837,8 @@ ubcmtp_tp_intr(struct usbd_xfer *xfer, void *priv, usbd_status status)
 {
 	struct ubcmtp_softc *sc = priv;
 	struct ubcmtp_finger *finger;
+	struct ubcmtp_finger_compact *compact_finger;
+	union ubcmtp_finger_compact_coords compact_finger_coords;
 	u_int32_t pktlen;
 	int off, s, btn, contacts = 0;
 
@@ -802,6 +862,28 @@ ubcmtp_tp_intr(struct usbd_xfer *xfer, void *priv, usbd_status status)
 		return;
 
 	contacts = 0;
+
+	/* Magic Trackpad 2 has so-called compact report */
+	if (sc->dev_type->type == UBCMTP_TYPE_MT2U) {
+		for (off = sc->tp_offset; off < pktlen;
+			 off += (sizeof(struct ubcmtp_finger_compact) + sc->tp_fingerpad)) {
+			compact_finger = (struct ubcmtp_finger_compact *)(sc->tp_pkt + off);
+
+			if (letoh32(compact_finger->touch_major) == 0)
+				continue; /* finger lifted */
+
+			compact_finger_coords.num = letoh32(compact_finger->coords);
+
+			sc->frame[contacts].x = compact_finger_coords.x;
+			sc->frame[contacts].y = sc->dev_type->l_y.min
+				+ sc->dev_type->l_y.max- compact_finger_coords.y;
+			sc->frame[contacts].pressure = DEFAULT_PRESSURE;
+			contacts++;
+		}
+
+		goto done;
+	}
+
 	for (off = sc->tp_offset; off < pktlen;
 	    off += (sizeof(struct ubcmtp_finger) + sc->tp_fingerpad)) {
 		finger = (struct ubcmtp_finger *)(sc->tp_pkt + off);
@@ -815,6 +897,8 @@ ubcmtp_tp_intr(struct usbd_xfer *xfer, void *priv, usbd_status status)
 		contacts++;
 	}
 
+done:
+
 	btn = sc->btn;
 	if (sc->dev_type->type == UBCMTP_TYPE2)
 		sc->btn = !!((int16_t)letoh16(sc->tp_pkt[UBCMTP_TYPE2_BTOFF]));
@@ -822,6 +906,8 @@ ubcmtp_tp_intr(struct usbd_xfer *xfer, void *priv, usbd_status status)
 		sc->btn = !!((int16_t)letoh16(sc->tp_pkt[UBCMTP_TYPE3_BTOFF]));
 	else if (sc->dev_type->type == UBCMTP_TYPE4)
 		sc->btn = !!((int16_t)letoh16(sc->tp_pkt[UBCMTP_TYPE4_BTOFF]));
+	else if (sc->dev_type->type == UBCMTP_TYPE_MT2U)
+		sc->btn = !!((int16_t)letoh16(sc->tp_pkt[UBCMTP_TYPE_MT2U_BTOFF]));
 
 	if (contacts || sc->contacts || sc->btn != btn) {
 		sc->contacts = contacts;

@@ -902,6 +902,10 @@ const struct usb_known_product usb_known_products[] = {
 	    "Keyboard/Trackpad",
 	},
 	{
+	    USB_VENDOR_APPLE, USB_PRODUCT_APPLE_MAGIC_TRACKPAD2,
+	    "Apple Magic Trackpad 2",
+	},
+	{
 	    USB_VENDOR_APPLE, USB_PRODUCT_APPLE_WELLSPRING9_ANSI,
 	    "Keyboard/Trackpad",
 	},

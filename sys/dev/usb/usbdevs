@@ -998,6 +998,7 @@ product APPLE WELLSPRING7A_JIS	0x025b	Keyboard/Trackpad
 product APPLE WELLSPRING7_ANSI	0x0262	Keyboard/Trackpad
 product APPLE WELLSPRING7_ISO	0x0263	Keyboard/Trackpad
 product APPLE WELLSPRING7_JIS	0x0264	Keyboard/Trackpad
+product APPLE MAGIC_TRACKPAD2	0x0265	Apple Magic Trackpad 2
 product APPLE WELLSPRING9_ANSI	0x0272	Keyboard/Trackpad
 product APPLE WELLSPRING9_ISO	0x0273	Keyboard/Trackpad
 product APPLE WELLSPRING9_JIS	0x0274	Keyboard/Trackpad
