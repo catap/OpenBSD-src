@@ -109,8 +109,23 @@ ${CROSS_TARGETS}:
 . include "Makefile.cross"
 .endif # defined(TARGET)
 
+
+aftersysupgrade:
+	@if [[ `id -u` -ne 0 ]]; then \
+		echo $@ must be called by root >&2; \
+		false; \
+	fi
+	exec ${MAKE} includes
+.for D in ${AFTER_SYSUPGRADE_REBUILD}
+	cd ${D} && \
+	    su ${BUILDUSER} -c 'exec ${MAKE} clean' && \
+	    su ${BUILDUSER} -c 'exec ${MAKE} obj' && \
+	    su ${BUILDUSER} -c 'exec ${MAKE}' && \
+	    NOMAN=1 exec ${MAKE} install
+.endfor
+
 .PHONY: ${CROSS_TARGETS} \
 	build regression-tests includes beforeinstall afterinstall \
-	all do-build
+	all do-build aftersysupgrade
 
 .include <bsd.subdir.mk>
