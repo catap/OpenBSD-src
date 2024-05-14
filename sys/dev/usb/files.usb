@@ -260,6 +260,11 @@ device urndis: ether, ifnet, ifmedia
 attach urndis at uhub
 file	dev/usb/if_urndis.c		urndis
 
+# iPhone USB Ethernet
+device  ipheth: ether, ifnet, ifmedia
+attach  ipheth at uhub
+file	dev/usb/if_ipheth.c		ipheth
+
 # Moschip MCS7x30 Ethernet
 device	mos: ether, ifnet, mii, ifmedia
 attach	mos at uhub
