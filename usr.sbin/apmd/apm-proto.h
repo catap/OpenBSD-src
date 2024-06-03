@@ -38,6 +38,7 @@ enum apm_action {
 	SETPERF_LOW,
 	SETPERF_HIGH,
 	SETPERF_AUTO,
+	SETPERF_POWERSAVING,
 };
 
 enum apm_state {
@@ -51,6 +52,7 @@ enum apm_perfmode {
 	PERF_NONE = -1,
 	PERF_MANUAL,
 	PERF_AUTO,
+	PERF_POWERSAVING,
 };
 
 struct apm_command {

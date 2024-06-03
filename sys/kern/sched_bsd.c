@@ -65,6 +65,10 @@ uint32_t		decay_aftersleep(uint32_t, uint32_t);
 
 extern struct cpuset sched_idle_cpus;
 
+#ifdef __HAVE_CPU_TOPOLOGY
+extern int sched_smt;
+#endif
+
 /*
  * constants for averages over 1, 5, and 15 minutes when sampling at
  * 5 second intervals.
@@ -563,8 +567,11 @@ void (*cpu_setperf)(int);
 #define PERFPOL_MANUAL 0
 #define PERFPOL_AUTO 1
 #define PERFPOL_HIGH 2
+#define PERFPOL_POWERSAVING 4
 int perflevel = 100;
 int perfpolicy = PERFPOL_AUTO;
+/* avoid turbo frequency by default */
+int powersavelimit = 75;
 
 #ifndef SMALL_KERNEL
 /*
@@ -573,7 +580,9 @@ int perfpolicy = PERFPOL_AUTO;
 #include <sys/sysctl.h>
 
 void setperf_auto(void *);
+void setperf_powersaving(void *);
 struct timeout setperf_to = TIMEOUT_INITIALIZER(setperf_auto, NULL);
+struct timeout setperf_to_powersaving = TIMEOUT_INITIALIZER(setperf_powersaving, NULL);
 extern int hw_power;
 
 void
@@ -643,6 +652,93 @@ faster:
 	timeout_add_msec(&setperf_to, 100);
 }
 
+void
+setperf_powersaving(void *v)
+{
+	static uint64_t *idleticks, *totalticks;
+	static int downbeats;
+	int i, j = 0;
+	int speedup = 0;
+	CPU_INFO_ITERATOR cii;
+	struct cpu_info *ci, *firstoffline = NULL, *lastidle = NULL;
+	uint64_t idle, total, allidle = 0, alltotal = 0;
+
+	/* policy was changed, online all CPU cores */
+	if (perfpolicy != PERFPOL_POWERSAVING) {
+		CPU_INFO_FOREACH(cii, ci) {
+			if (ci->ci_schedstate.spc_schedflags & SPCF_HALTED ||
+			    ci->ci_schedstate.spc_schedflags & SPCF_SHOULDHALT) {
+#ifdef __HAVE_CPU_TOPOLOGY
+				if (!(sched_smt || ci->ci_smt_id == 0))
+					continue;
+#endif
+				sched_start_cpu(ci);
+			}
+		}
+		return;
+	}
+
+	if (!idleticks)
+		if (!(idleticks = mallocarray(ncpusfound, sizeof(*idleticks),
+		    M_DEVBUF, M_NOWAIT | M_ZERO)))
+			return;
+	if (!totalticks)
+		if (!(totalticks = mallocarray(ncpusfound, sizeof(*totalticks),
+		    M_DEVBUF, M_NOWAIT | M_ZERO))) {
+			free(idleticks, M_DEVBUF,
+			    sizeof(*idleticks) * ncpusfound);
+			return;
+		}
+	CPU_INFO_FOREACH(cii, ci) {
+		if (ci->ci_schedstate.spc_schedflags & SPCF_HALTED ||
+		    ci->ci_schedstate.spc_schedflags & SPCF_SHOULDHALT) {
+			if (!firstoffline)
+#ifdef __HAVE_CPU_TOPOLOGY
+				if (sched_smt || ci->ci_smt_id == 0)
+#endif
+					firstoffline = ci;
+			continue;
+		}
+		total = 0;
+		for (i = 0; i < CPUSTATES; i++) {
+			total += ci->ci_schedstate.spc_cp_time[i];
+		}
+		total -= totalticks[j];
+		idle = ci->ci_schedstate.spc_cp_time[CP_IDLE] - idleticks[j];
+		if (idle < total / 3)
+			speedup = 1;
+		alltotal += total;
+		allidle += idle;
+		idleticks[j] += idle;
+		totalticks[j] += total;
+		/* it shoul keep at least one CPU online */
+		if (j++ && cpuset_isset(&sched_idle_cpus, ci))
+			lastidle = ci;
+	}
+	if (allidle < alltotal / 3)
+		speedup = 1;
+	if (speedup)
+		/* twice as long here because we check every 200ms */
+		downbeats = 1;
+
+	if (speedup && cpu_setperf && perflevel != powersavelimit) {
+		perflevel = powersavelimit;
+		cpu_setperf(perflevel);
+	} else if (speedup && firstoffline) {
+		sched_start_cpu(firstoffline);
+	} else if (!speedup && cpu_setperf && perflevel != 0 && --downbeats <= 0) {
+		perflevel = 0;
+		cpu_setperf(perflevel);
+	} else if (!speedup && lastidle) {
+		sched_stop_cpu(lastidle);
+	}
+
+	/* every 200ms to have a better resolution of the load */
+	timeout_add_msec(&setperf_to_powersaving, 200);
+	return;
+}
+
+
 int
 sysctl_hwsetperf(void *oldp, size_t *oldlenp, void *newp, size_t newlen)
 {
@@ -681,6 +777,9 @@ sysctl_hwperfpolicy(void *oldp, size_t *oldlenp, void *newp, size_t newlen)
 	case PERFPOL_AUTO:
 		strlcpy(policy, "auto", sizeof(policy));
 		break;
+	case PERFPOL_POWERSAVING:
+		strlcpy(policy, "powersaving", sizeof(policy));
+		break;
 	case PERFPOL_HIGH:
 		strlcpy(policy, "high", sizeof(policy));
 		break;
@@ -699,6 +798,8 @@ sysctl_hwperfpolicy(void *oldp, size_t *oldlenp, void *newp, size_t newlen)
 		perfpolicy = PERFPOL_MANUAL;
 	else if (strcmp(policy, "auto") == 0)
 		perfpolicy = PERFPOL_AUTO;
+	else if (strcmp(policy, "powersaving") == 0)
+		perfpolicy = PERFPOL_POWERSAVING;
 	else if (strcmp(policy, "high") == 0)
 		perfpolicy = PERFPOL_HIGH;
 	else
@@ -706,11 +807,23 @@ sysctl_hwperfpolicy(void *oldp, size_t *oldlenp, void *newp, size_t newlen)
 
 	if (perfpolicy == PERFPOL_AUTO) {
 		timeout_add_msec(&setperf_to, 200);
+	} else if (perfpolicy == PERFPOL_POWERSAVING) {
+		timeout_add_msec(&setperf_to_powersaving, 200);
 	} else if (perfpolicy == PERFPOL_HIGH) {
 		perflevel = 100;
 		cpu_setperf(perflevel);
 	}
 	return 0;
+}
+
+int
+sysctl_powersavelimit(void *oldp, size_t *oldlenp, void *newp, size_t newlen)
+{
+	if (!cpu_setperf)
+		return EOPNOTSUPP;
+
+	return sysctl_int_bounded(oldp, oldlenp, newp, newlen,
+	    &powersavelimit, 0, 100);
 }
 #endif
 

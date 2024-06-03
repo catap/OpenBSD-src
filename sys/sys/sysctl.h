@@ -950,6 +950,7 @@ struct kinfo_file {
 #define	HW_POWER		26	/* int: machine has wall-power */
 #define	HW_BATTERY		27	/* node: battery */
 #define	HW_UCOMNAMES		28	/* strings: ucom names */
+#define	HW_POWERSAVELIMIT	29	/* set the limit for powersave policy */
 #define	HW_MAXID		30	/* number of valid hw ids */
 
 #define	CTL_HW_NAMES { \
@@ -982,6 +983,7 @@ struct kinfo_file {
 	{ "power", CTLTYPE_INT }, \
 	{ "battery", CTLTYPE_NODE }, \
 	{ "ucomnames", CTLTYPE_STRING }, \
+	{ "powersavelimit", CTLTYPE_INT }, \
 }
 
 /*

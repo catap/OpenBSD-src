@@ -173,6 +173,7 @@ void sched_barrier(struct cpu_info *ci);
 
 int sysctl_hwsetperf(void *, size_t *, void *, size_t);
 int sysctl_hwperfpolicy(void *, size_t *, void *, size_t);
+int sysctl_powersavelimit(void *, size_t *, void *, size_t);
 int sysctl_hwsmt(void *, size_t *, void *, size_t);
 int sysctl_hwncpuonline(void);
 

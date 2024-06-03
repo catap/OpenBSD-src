@@ -58,6 +58,7 @@
 #define AUTO_HIBERNATE 2
 
 int debug = 0;
+int use_powersaving = 0;
 
 extern char *__progname;
 
@@ -100,7 +101,7 @@ void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: %s [-AadHLs] [-f devname] [-S sockname] [-t seconds] "
+	    "usage: %s [-AadHLPs] [-f devname] [-S sockname] [-t seconds] "
 		"[-Z percent] [-z percent]\n", __progname);
 	exit(1);
 }
@@ -139,6 +140,10 @@ power_status(int fd, int force, struct apm_power_info *pinfo)
 	static struct apm_power_info last;
 	int acon = 0, priority = LOG_NOTICE;
 
+	int perfpol_mib[] = { CTL_HW, HW_PERFPOLICY };
+	char perfpol[32];
+	size_t perfpol_sz = sizeof(perfpol);
+
 	if (fd == -1) {
 		if (pinfo) {
 			bstate.battery_state = 255;
@@ -151,11 +156,19 @@ power_status(int fd, int force, struct apm_power_info *pinfo)
 		return 0;
 	}
 
+	if (sysctl(perfpol_mib, 2, perfpol, &perfpol_sz, NULL, 0) == -1)
+		logmsg(LOG_INFO, "cannot read hw.perfpolicy");
+
 	if (ioctl(fd, APM_IOC_GETPOWER, &bstate) == 0) {
 	/* various conditions under which we report status:  something changed
 	 * enough since last report, or asked to force a print */
-		if (bstate.ac_state == APM_AC_ON)
+		if (bstate.ac_state == APM_AC_ON) {
 			acon = 1;
+			if(use_powersaving && strcmp(perfpol, "powersaving") == 0)
+				setperfpolicy("auto");
+		} else if(use_powersaving && strcmp(perfpol, "auto") == 0)
+				setperfpolicy("powersaving");
+
 		if (bstate.battery_state == APM_BATT_CRITICAL &&
 		    bstate.battery_state != last.battery_state)
 			priority = LOG_EMERG;
@@ -282,6 +295,11 @@ handle_client(int sock_fd, int ctl_fd)
 		logmsg(LOG_NOTICE, "setting hw.perfpolicy to high");
 		setperfpolicy("high");
 		break;
+	case SETPERF_POWERSAVING:
+		reply.newstate = NORMAL;
+		logmsg(LOG_NOTICE, "setting hw.perfpolicy to powersaving");
+		setperfpolicy("powersaving");
+		break;
 	case SETPERF_AUTO:
 		reply.newstate = NORMAL;
 		logmsg(LOG_NOTICE, "setting hw.perfpolicy to auto");
@@ -299,8 +317,10 @@ handle_client(int sock_fd, int ctl_fd)
 		if (strcmp(perfpol, "manual") == 0 ||
 		    strcmp(perfpol, "high") == 0) {
 			reply.perfmode = PERF_MANUAL;
-		} else if (strcmp(perfpol, "auto") == 0)
+		} else if (strcmp(perfpol, "auto") == 0) {
 			reply.perfmode = PERF_AUTO;
+		} else if (strcmp(perfpol, "powersaving") == 0)
+			reply.perfmode = PERF_POWERSAVING;
 	}
 
 	if (sysctl(cpuspeed_mib, 2, &cpuspeed, &cpuspeed_sz, NULL, 0) == -1) {
@@ -423,7 +443,7 @@ main(int argc, char *argv[])
 	struct kevent ev[2];
 	int doperf = PERF_NONE;
 
-	while ((ch = getopt(argc, argv, "aACdHLsf:t:S:z:Z:")) != -1)
+	while ((ch = getopt(argc, argv, "aACdHLPsf:t:S:z:Z:")) != -1)
 		switch(ch) {
 		case 'a':
 			noacsleep = 1;
@@ -448,7 +468,9 @@ main(int argc, char *argv[])
 			break;
 		case 'A':
 		case 'C':
-			if (doperf != PERF_NONE)
+			if (doperf == PERF_POWERSAVING)
+				use_powersaving = 1;
+			else if (doperf != PERF_NONE)
 				usage();
 			doperf = PERF_AUTO;
 			setperfpolicy("auto");
@@ -458,6 +480,15 @@ main(int argc, char *argv[])
 				usage();
 			doperf = PERF_MANUAL;
 			setperfpolicy("low");
+			break;
+		case 'P':
+			if (doperf == PERF_NONE) {
+				doperf = PERF_POWERSAVING;
+				setperfpolicy("powersaving");
+			} else if (doperf != PERF_AUTO)
+				usage();
+			else
+				use_powersaving = 1;
 			break;
 		case 'H':
 			if (doperf != PERF_NONE)

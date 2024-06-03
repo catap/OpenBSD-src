@@ -79,6 +79,8 @@ perf_mode(int mode)
 		return "manual";
 	case PERF_AUTO:
 		return "auto";
+	case PERF_POWERSAVING:
+		return "powersaving";
 	default:
 		return "invalid";
 	}

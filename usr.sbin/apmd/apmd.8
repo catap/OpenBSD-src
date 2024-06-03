@@ -34,7 +34,7 @@
 .Nd Advanced Power Management daemon
 .Sh SYNOPSIS
 .Nm apmd
-.Op Fl AadHLs
+.Op Fl AadHLPs
 .Op Fl f Ar devname
 .Op Fl S Ar sockname
 .Op Fl t Ar seconds
@@ -94,6 +94,12 @@ Start
 in manual performance adjustment mode, initialising
 .Va hw.setperf
 to 0.
+.It Fl P
+Start
+.Nm
+in powersaving mode. This flag can be used with
+.Fl A
+to use auto mode on AC power, and powersaving on battery.
 .It Fl S Ar sockname
 Specify an alternate socket name,
 .Ar sockname .

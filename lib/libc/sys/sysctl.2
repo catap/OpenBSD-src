@@ -293,6 +293,7 @@ privileges may change the value.
 .It Dv HW_PHYSMEM Ta "integer" Ta "no"
 .It Dv HW_PHYSMEM64 Ta "int64_t" Ta "no"
 .It Dv HW_POWER Ta "integer" Ta "no"
+.It Dv HW_POWERSAVELIMIT Ta "integer" Ta "yes"
 .It Dv HW_PRODUCT Ta "string" Ta "no"
 .It Dv HW_SENSORS Ta "node" Ta "not applicable"
 .It Dv HW_SETPERF Ta "integer" Ta "yes"
@@ -384,8 +385,19 @@ The performance policy for power management.
 Can be one of
 .Dq manual ,
 .Dq auto ,
+.Dq powersaving ,
 or
 .Dq high .
+.Pp
+The differences between
+.Dq auto
+and
+.Dq powersaving
+policies are that the latter trades off some system responsiveness for
+reduced power consumption. In addition, it has an upper limit on CPU
+performance that can be adjusted by
+.Dv HW_POWERSAVELIMIT ,
+and it offlines unused CPU cores.
 .It Dv HW_PHYSMEM
 The total physical memory, in bytes.
 This variable is deprecated; use
@@ -395,6 +407,10 @@ instead.
 The total physical memory, in bytes.
 .It Dv HW_POWER Pq Va hw.power
 Machine has wall-power.
+.It Dv HW_POWERSAVELIMIT Pq Va hw.powersavelimit
+An upper limit of CPU performance in
+.Dq powersaving
+policy.
 .It Dv HW_PRODUCT Pq Va hw.product
 The product name of the machine.
 .It Dv HW_SENSORS Pq Va hw.sensors
