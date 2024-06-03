@@ -636,23 +636,49 @@ sched_peg_curproc(struct cpu_info *ci)
 #ifdef MULTIPROCESSOR
 
 void
+sched_start_cpu(struct cpu_info *ci)
+{
+	struct schedstate_percpu *spc = &ci->ci_schedstate;
+
+	atomic_clearbits_int(&spc->spc_schedflags,
+		SPCF_SHOULDHALT | SPCF_HALTED);
+	cpuset_add(&sched_all_cpus, ci);
+}
+
+void sched_stop_cpu(struct cpu_info *ci)
+{
+	struct schedstate_percpu *spc = &ci->ci_schedstate;
+
+	cpuset_del(&sched_all_cpus, ci);
+	atomic_setbits_int(&spc->spc_schedflags, SPCF_SHOULDHALT);
+
+	need_resched(ci);
+}
+
+void sched_wait_halted_cpu(struct cpu_info *ci)
+{
+	struct schedstate_percpu *spc = &ci->ci_schedstate;
+
+	while ((spc->spc_schedflags & SPCF_HALTED) == 0) {
+		sleep_setup(spc, PZERO, "schedstate");
+		sleep_finish(0, (spc->spc_schedflags & SPCF_HALTED) == 0);
+	}
+}
+
+void
 sched_start_secondary_cpus(void)
 {
 	CPU_INFO_ITERATOR cii;
 	struct cpu_info *ci;
 
 	CPU_INFO_FOREACH(cii, ci) {
-		struct schedstate_percpu *spc = &ci->ci_schedstate;
-
 		if (CPU_IS_PRIMARY(ci) || !CPU_IS_RUNNING(ci))
 			continue;
-		atomic_clearbits_int(&spc->spc_schedflags,
-		    SPCF_SHOULDHALT | SPCF_HALTED);
 #ifdef __HAVE_CPU_TOPOLOGY
 		if (!sched_smt && ci->ci_smt_id > 0)
 			continue;
 #endif
-		cpuset_add(&sched_all_cpus, ci);
+		sched_start_cpu(ci);
 	}
 }
 
@@ -666,23 +692,14 @@ sched_stop_secondary_cpus(void)
 	 * Make sure we stop the secondary CPUs.
 	 */
 	CPU_INFO_FOREACH(cii, ci) {
-		struct schedstate_percpu *spc = &ci->ci_schedstate;
-
 		if (CPU_IS_PRIMARY(ci) || !CPU_IS_RUNNING(ci))
 			continue;
-		cpuset_del(&sched_all_cpus, ci);
-		atomic_setbits_int(&spc->spc_schedflags, SPCF_SHOULDHALT);
+		sched_stop_cpu(ci);
 	}
 	CPU_INFO_FOREACH(cii, ci) {
-		struct schedstate_percpu *spc = &ci->ci_schedstate;
-
 		if (CPU_IS_PRIMARY(ci) || !CPU_IS_RUNNING(ci))
 			continue;
-		while ((spc->spc_schedflags & SPCF_HALTED) == 0) {
-			sleep_setup(spc, PZERO, "schedstate");
-			sleep_finish(0,
-			    (spc->spc_schedflags & SPCF_HALTED) == 0);
-		}
+		sched_wait_halted_cpu(ci);
 	}
 }
 
@@ -879,9 +896,9 @@ sysctl_hwsmt(void *oldp, size_t *oldlenp, void *newp, size_t newlen)
 		if (ci->ci_smt_id == 0)
 			continue;
 		if (sched_smt)
-			cpuset_add(&sched_all_cpus, ci);
+			sched_start_cpu(ci);
 		else
-			cpuset_del(&sched_all_cpus, ci);
+			sched_stop_cpu(ci);
 	}
 
 	return 0;

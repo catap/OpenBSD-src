@@ -177,6 +177,9 @@ int sysctl_hwsmt(void *, size_t *, void *, size_t);
 int sysctl_hwncpuonline(void);
 
 #ifdef MULTIPROCESSOR
+void sched_start_cpu(struct cpu_info *ci);
+void sched_stop_cpu(struct cpu_info *ci);
+void sched_wait_halted_cpu(struct cpu_info *ci);
 void sched_start_secondary_cpus(void);
 void sched_stop_secondary_cpus(void);
 #endif
