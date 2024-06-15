@@ -191,7 +191,14 @@ sched_idle(void *v)
 				wakeup(spc);
 			}
 #endif
-			cpu_idle_cycle();
+
+#ifdef MULTIPROCESSOR
+			if (spc->spc_schedflags & SPCF_HALTED &&
+			    cpu_suspend_cycle_fcn)
+				cpu_suspend_cycle_fcn();
+			else
+#endif
+				cpu_idle_cycle();
 		}
 		cpu_idle_leave();
 		cpuset_del(&sched_idle_cpus, ci);
