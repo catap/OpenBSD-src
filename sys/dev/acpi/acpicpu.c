@@ -947,6 +947,7 @@ ffh:
 int
 acpicpu_getpss(struct acpicpu_softc *sc)
 {
+	extern char cpu_model[];
 	struct aml_value	res;
 	int			i, c, cf;
 
@@ -979,6 +980,10 @@ acpicpu_getpss(struct acpicpu_softc *sc)
 			    "frequency value\n", sc->sc_dev.dv_xname);
 			continue;
 		}
+
+		/* this CPU has 1600 Mhz as base freqnecy  */
+		if (cf > 1600 && strcmp(cpu_model, "Intel(R) Core(TM) i5-10210U CPU @ 1.60GHz") == 0)
+			continue;
 
 		sc->sc_pss[c].pss_core_freq = cf;
 		sc->sc_pss[c].pss_power = aml_val2int(
