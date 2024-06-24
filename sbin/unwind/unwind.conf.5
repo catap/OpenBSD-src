@@ -63,12 +63,21 @@ forwarder { $fwd1 $fwd2 }
 .Ed
 .Sh GLOBAL CONFIGURATION
 .Bl -tag -width Ds
-.It Ic block list Ar file Op Cm log
-A file containing domains to block, one per line.
-If a domain from this list is queried,
-.Nm unwind
-answers with a return code of
-.Dv REFUSED .
+.It Ar type Ic list Ar file Op Cm log
+A
+.Ar file
+with domains to build the
+.Ic block
+or
+.Ic allow
+list. The
+.Ic block
+list allows querying all possible domains, and any matching
+domain returns a
+.Dv REFUSED
+response. The
+.Ic allow
+list allows querying only matching domains. With
 .Cm log
 blocked queries are logged. The list supports limited wildcard
 syntax: domains starting with . (dot) are treated as any subdomains
@@ -169,6 +178,20 @@ to use a specific resolver type:
 .Bd -literal -offset indent
 force autoconf { domain.local }
 .Ed
+.Pp
+Allow requests for domains in openbsd.org zone and log each
+blocked request:
+.Bd -literal -offset indent
+allow list "/etc/allowlist" log
+.Ed
+.Pp
+Where a list of allowed doamins
+.Pa /etc/allowlist :
+.Bd -literal -offset indent
+openbsd.org
+.openbsd.org
+.Ed
+.Pp
 .Sh SEE ALSO
 .Xr rc.conf.local 8 ,
 .Xr unwind 8 ,

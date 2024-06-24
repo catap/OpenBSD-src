@@ -66,9 +66,11 @@ print_config(struct uw_conf *conf)
 		printf("}\n");
 	}
 
-	if (conf->blocklist_file != NULL)
-		printf("block list \"%s\"%s\n", conf->blocklist_file,
-		    conf->blocklist_log ? " log" : "");
+	if (conf->list_file != NULL)
+		printf("%s list \"%s\"%s\n",
+		    conf->list_allowed ? "allow" : "block",
+		    conf->list_file,
+		    conf->list_log ? " log" : "");
 	for (j = 0; j < UW_RES_NONE; j++) {
 		struct force_tree_entry	*e;
 		int			 empty = 1;
