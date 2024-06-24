@@ -115,9 +115,11 @@ struct pending_query {
 
 TAILQ_HEAD(, pending_query)	 pending_queries;
 
-struct bl_node {
-	RB_ENTRY(bl_node)	 entry;
+struct l_node {
+	RB_ENTRY(l_node)	 entry;
 	char			*domain;
+	int			 len;
+	int			 wildcard;
 };
 
 __dead void		 frontend_shutdown(void);
@@ -148,9 +150,9 @@ struct pending_query	*find_pending_query(uint64_t);
 void			 parse_trust_anchor(struct trust_anchor_head *, int);
 void			 send_trust_anchors(struct trust_anchor_head *);
 void			 write_trust_anchors(struct trust_anchor_head *, int);
-void			 parse_blocklist(int);
-int			 bl_cmp(struct bl_node *, struct bl_node *);
-void			 free_bl(void);
+void			 parse_list(int);
+int			 l_cmp(struct l_node *, struct l_node *);
+void			 free_l(void);
 int			 pending_query_cnt(void);
 void			 check_available_af(void);
 
@@ -164,12 +166,24 @@ int			 ta_fd = -1;
 
 static struct trust_anchor_head	 trust_anchors, new_trust_anchors;
 
-RB_HEAD(bl_tree, bl_node)	 bl_head = RB_INITIALIZER(&bl_head);
-RB_PROTOTYPE(bl_tree, bl_node, entry, bl_cmp)
-RB_GENERATE(bl_tree, bl_node, entry, bl_cmp)
+RB_HEAD(l_tree, l_node)	 l_head = RB_INITIALIZER(&l_head);
+RB_PROTOTYPE(l_tree, l_node, entry, l_cmp)
+RB_GENERATE(l_tree, l_node, entry, l_cmp)
 
 struct dns64_prefix	*dns64_prefixes;
 int			 dns64_prefix_count;
+
+static void
+reverse(char* begin, char* end)
+{
+	char t;
+	while (begin < --end) {
+		t = *begin;
+		*begin = *end;
+		*end = t;
+		++begin;
+	}
+}
 
 void
 frontend_sig_handler(int sig, short event, void *bula)
@@ -362,7 +376,7 @@ frontend_dispatch_main(int fd, short event, void *bula)
 			event_add(&iev_resolver->ev, NULL);
 			break;
 		case IMSG_RECONF_CONF:
-		case IMSG_RECONF_BLOCKLIST_FILE:
+		case IMSG_RECONF_LIST_FILE:
 		case IMSG_RECONF_FORWARDER:
 		case IMSG_RECONF_DOT_FORWARDER:
 		case IMSG_RECONF_FORCE:
@@ -373,8 +387,8 @@ frontend_dispatch_main(int fd, short event, void *bula)
 				fatalx("%s: IMSG_RECONF_END without "
 				    "IMSG_RECONF_CONF", __func__);
 			merge_config(frontend_conf, nconf);
-			if (frontend_conf->blocklist_file == NULL)
-				free_bl();
+			if (frontend_conf->list_file == NULL)
+				free_l();
 			nconf = NULL;
 			break;
 		case IMSG_UDP6SOCK:
@@ -454,11 +468,11 @@ frontend_dispatch_main(int fd, short event, void *bula)
 			if (!TAILQ_EMPTY(&trust_anchors))
 				send_trust_anchors(&trust_anchors);
 			break;
-		case IMSG_BLFD:
+		case IMSG_LSFD:
 			if ((fd = imsg_get_fd(&imsg)) == -1)
 				fatalx("%s: expected to receive imsg block "
 				   "list fd but didn't receive any", __func__);
-			parse_blocklist(fd);
+			parse_list(fd);
 			break;
 		default:
 			log_debug("%s: error handling imsg %d", __func__,
@@ -732,8 +746,8 @@ void
 handle_query(struct pending_query *pq)
 {
 	struct query_imsg	 query_imsg;
-	struct bl_node		 find;
-	int			 rcode;
+	struct l_node		 find;
+	int			 rcode, matched;
 	char			*str;
 	char			 dname[LDNS_MAX_DOMAINLEN + 1];
 	char			 qclass_buf[16];
@@ -790,9 +804,14 @@ handle_query(struct pending_query *pq)
 	log_debug("%s: %s %s %s ?", ip_port((struct sockaddr *)&pq->from),
 	    dname, qclass_buf, qtype_buf);
 
+	find.len = strlen(dname);
+	find.wildcard = 0;
+	reverse(dname, dname + find.len);
 	find.domain = dname;
-	if (RB_FIND(bl_tree, &bl_head, &find) != NULL) {
-		if (frontend_conf->blocklist_log)
+	matched = (RB_FIND(l_tree, &l_head, &find) != NULL);
+	reverse(dname, dname + find.len);
+	if (matched != frontend_conf->list_allowed) {
+		if (frontend_conf->list_log)
 			log_info("blocking %s", dname);
 		error_answer(pq, LDNS_RCODE_REFUSED);
 		goto send_answer;
@@ -1520,39 +1539,45 @@ out:
 }
 
 void
-parse_blocklist(int fd)
+parse_list(int fd)
 {
 	FILE		 *f;
-	struct bl_node	*bl_node;
+	struct l_node	 *l_node;
 	char		 *line = NULL;
 	size_t		  linesize = 0;
 	ssize_t		  linelen;
 
 	if((f = fdopen(fd, "r")) == NULL) {
-		log_warn("cannot read block list");
+		log_warn("cannot read list file");
 		close(fd);
 		return;
 	}
 
-	free_bl();
+	free_l();
 
 	while ((linelen = getline(&line, &linesize, f)) != -1) {
 		if (line[linelen - 1] == '\n') {
 			if (linelen >= 2 && line[linelen - 2] != '.')
 				line[linelen - 1] = '.';
 			else
-				line[linelen - 1] = '\0';
+				line[linelen-- - 1] = '\0';
 		}
 
-		bl_node = malloc(sizeof *bl_node);
-		if (bl_node == NULL)
+		if (line[0] == '#')
+		    continue;
+
+		l_node = malloc(sizeof *l_node);
+		if (l_node == NULL)
 			fatal("%s: malloc", __func__);
-		if ((bl_node->domain = strdup(line)) == NULL)
+		if ((l_node->domain = strdup(line)) == NULL)
 			fatal("%s: strdup", __func__);
-		if (RB_INSERT(bl_tree, &bl_head, bl_node) != NULL) {
-			log_warnx("duplicate blocked domain \"%s\"", line);
-			free(bl_node->domain);
-			free(bl_node);
+		reverse(l_node->domain, l_node->domain + linelen);
+		l_node->len = linelen;
+		l_node->wildcard = line[0] == '.';
+		if (RB_INSERT(l_tree, &l_head, l_node) != NULL) {
+			log_warnx("duplicate list domain \"%s\"", line);
+			free(l_node->domain);
+			free(l_node);
 		}
 	}
 	free(line);
@@ -1562,17 +1587,22 @@ parse_blocklist(int fd)
 }
 
 int
-bl_cmp(struct bl_node *e1, struct bl_node *e2) {
-	return (strcasecmp(e1->domain, e2->domain));
+l_cmp(struct l_node *e1, struct l_node *e2) {
+	if (e1->wildcard == e2->wildcard)
+		return (strcasecmp(e1->domain, e2->domain));
+	else if (e1->wildcard)
+		return (strncasecmp(e1->domain, e2->domain, e1->len));
+	else /* e2->wildcard */
+		return (strncasecmp(e1->domain, e2->domain, e2->len));
 }
 
 void
-free_bl(void)
+free_l(void)
 {
-	struct bl_node	*n, *nxt;
+	struct l_node	*n, *nxt;
 
-	RB_FOREACH_SAFE(n, bl_tree, &bl_head, nxt) {
-		RB_REMOVE(bl_tree, &bl_head, n);
+	RB_FOREACH_SAFE(n, l_tree, &l_head, nxt) {
+		RB_REMOVE(l_tree, &l_head, n);
 		free(n->domain);
 		free(n);
 	}

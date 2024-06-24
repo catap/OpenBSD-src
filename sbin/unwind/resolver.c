@@ -682,7 +682,7 @@ resolver_dispatch_main(int fd, short event, void *bula)
 				fatal("pledge");
 			break;
 		case IMSG_RECONF_CONF:
-		case IMSG_RECONF_BLOCKLIST_FILE:
+		case IMSG_RECONF_LIST_FILE:
 		case IMSG_RECONF_FORWARDER:
 		case IMSG_RECONF_DOT_FORWARDER:
 		case IMSG_RECONF_FORCE:

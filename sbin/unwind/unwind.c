@@ -73,7 +73,7 @@ int		main_reload(void);
 int		main_sendall(enum imsg_type, void *, uint16_t);
 void		open_ports(void);
 void		solicit_dns_proposals(void);
-void		send_blocklist_fd(void);
+void		send_list_fd(void);
 
 struct uw_conf		*main_conf;
 static struct imsgev	*iev_frontend;
@@ -290,8 +290,8 @@ main(int argc, char *argv[])
 	main_imsg_compose_frontend_fd(IMSG_ROUTESOCK, 0, frontend_routesock);
 	main_imsg_send_config(main_conf);
 
-	if (main_conf->blocklist_file != NULL)
-		send_blocklist_fd();
+	if (main_conf->list_file != NULL)
+		send_list_fd();
 
 	if (pledge("stdio rpath sendfd", NULL) == -1)
 		fatal("pledge");
@@ -577,8 +577,8 @@ main_reload(void)
 
 	merge_config(main_conf, xconf);
 
-	if (main_conf->blocklist_file != NULL)
-		send_blocklist_fd();
+	if (main_conf->list_file != NULL)
+		send_list_fd();
 
 	return (0);
 }
@@ -593,10 +593,10 @@ main_imsg_send_config(struct uw_conf *xconf)
 	if (main_sendall(IMSG_RECONF_CONF, xconf, sizeof(*xconf)) == -1)
 		return (-1);
 
-	if (xconf->blocklist_file != NULL) {
-		if (main_sendall(IMSG_RECONF_BLOCKLIST_FILE,
-		    xconf->blocklist_file, strlen(xconf->blocklist_file) + 1)
-		    == -1)
+	if (xconf->list_file != NULL) {
+		if (main_sendall(IMSG_RECONF_LIST_FILE,
+		    xconf->list_file, strlen(xconf->list_file) + 1)
+		== -1)
 			return (-1);
 	}
 
@@ -667,9 +667,10 @@ merge_config(struct uw_conf *conf, struct uw_conf *xconf)
 	memcpy(&conf->res_pref, &xconf->res_pref,
 	    sizeof(conf->res_pref));
 
-	free(conf->blocklist_file);
-	conf->blocklist_file = xconf->blocklist_file;
-	conf->blocklist_log = xconf->blocklist_log;
+	free(conf->list_file);
+	conf->list_file = xconf->list_file;
+	conf->list_log = xconf->list_log;
+	conf->list_allowed = xconf->list_allowed;
 
 	/* Add new forwarders. */
 	TAILQ_CONCAT(&conf->uw_forwarder_list, &xconf->uw_forwarder_list,
@@ -861,14 +862,14 @@ solicit_dns_proposals(void)
 }
 
 void
-send_blocklist_fd(void)
+send_list_fd(void)
 {
-	int	bl_fd;
+	int	fd;
 
-	if ((bl_fd = open(main_conf->blocklist_file, O_RDONLY)) != -1)
-		main_imsg_compose_frontend_fd(IMSG_BLFD, 0, bl_fd);
+	if ((fd = open(main_conf->list_file, O_RDONLY)) != -1)
+		main_imsg_compose_frontend_fd(IMSG_LSFD, 0, fd);
 	else
-		log_warn("%s", main_conf->blocklist_file);
+		log_warn("%s", main_conf->list_file);
 }
 
 void
@@ -896,11 +897,10 @@ imsg_receive_config(struct imsg *imsg, struct uw_conf **xconf)
 		TAILQ_INIT(&nconf->uw_dot_forwarder_list);
 		RB_INIT(&nconf->force);
 		break;
-	case IMSG_RECONF_BLOCKLIST_FILE:
+	case IMSG_RECONF_LIST_FILE:
 		if (((char *)imsg->data)[IMSG_DATA_SIZE(*imsg) - 1] != '\0')
-			fatalx("Invalid blocklist file");
-		if ((nconf->blocklist_file = strdup(imsg->data)) ==
-		    NULL)
+			fatalx("Invalid allowlist file");
+		if ((nconf->list_file = strdup(imsg->data)) == NULL)
 			fatal("%s: strdup", __func__);
 		break;
 	case IMSG_RECONF_FORWARDER:
