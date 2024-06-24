@@ -90,7 +90,7 @@ enum imsg_type {
 	IMSG_CTL_AUTOCONF,
 	IMSG_CTL_MEM,
 	IMSG_RECONF_CONF,
-	IMSG_RECONF_BLOCKLIST_FILE,
+	IMSG_RECONF_LIST_FILE,
 	IMSG_RECONF_FORWARDER,
 	IMSG_RECONF_DOT_FORWARDER,
 	IMSG_RECONF_FORCE,
@@ -117,7 +117,7 @@ enum imsg_type {
 	IMSG_NEW_TAS_ABORT,
 	IMSG_NEW_TAS_DONE,
 	IMSG_NETWORK_CHANGED,
-	IMSG_BLFD,
+	IMSG_LSFD,
 	IMSG_REPLACE_DNS,
 	IMSG_NEW_DNS64_PREFIXES_START,
 	IMSG_NEW_DNS64_PREFIX,
@@ -155,8 +155,9 @@ struct uw_conf {
 	struct force_tree		 force;
 	struct resolver_preference	 res_pref;
 	int				 enabled_resolvers[UW_RES_NONE];
-	char				*blocklist_file;
-	int				 blocklist_log;
+	char				*list_file;
+	int				 list_log;
+	int				 list_allowed;
 };
 
 struct query_imsg {

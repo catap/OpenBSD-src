@@ -102,11 +102,11 @@ typedef struct {
 %token	INCLUDE ERROR
 %token	FORWARDER DOT PORT ODOT_FORWARDER ODOT_AUTOCONF ODOT_DHCP
 %token	AUTHENTICATION NAME PREFERENCE RECURSOR AUTOCONF DHCP STUB
-%token	BLOCK LIST LOG FORCE ACCEPT BOGUS
+%token	ALLOW BLOCK LIST LOG FORCE ACCEPT BOGUS
 
 %token	<v.string>	STRING
 %token	<v.number>	NUMBER
-%type	<v.number>	port dot prefopt log acceptbogus
+%type	<v.number>	port dot prefopt log acceptbogus list_allowed
 %type	<v.string>	string authname
 %type	<v.force>	force_list
 
@@ -118,7 +118,7 @@ grammar		: /* empty */
 		| grammar varset '\n'
 		| grammar uw_pref '\n'
 		| grammar uw_forwarder '\n'
-		| grammar block_list '\n'
+		| grammar the_list '\n'
 		| grammar force '\n'
 		| grammar error '\n'		{ file->errors++; }
 		;
@@ -176,21 +176,27 @@ optnl		: '\n' optnl		/* zero or more newlines */
 		| /*empty*/
 		;
 
-block_list		: BLOCK LIST STRING log {
-				if (conf->blocklist_file != NULL) {
-					yyerror("block list already "
-					    "configured");
+the_list		: list_allowed LIST STRING log {
+				if (conf->list_file != NULL) {
+					yyerror("the %s list already "
+					    "configured",
+					    $1 ? "allow" : "block");
 					free($3);
 					YYERROR;
 				} else {
-					conf->blocklist_file = strdup($3);
-					if (conf->blocklist_file == NULL)
+					conf->list_file = strdup($3);
+					if (conf->list_file == NULL)
 						err(1, "strdup");
 					free($3);
-					conf->blocklist_log = $4;
+					conf->list_log = $4;
+					conf->list_allowed = $1;
 				}
 			}
 			;
+
+list_allowed:	BLOCK	{ $$ = 0; }
+	|	ALLOW	{ $$ = 1; }
+	;
 
 uw_pref			: PREFERENCE {
 				conf->res_pref.len = 0;
@@ -417,6 +423,7 @@ lookup(char *s)
 	static const struct keywords keywords[] = {
 		{"DoT",			DOT},
 		{"accept",		ACCEPT},
+		{"allow",		ALLOW},
 		{"authentication",	AUTHENTICATION},
 		{"autoconf",		AUTOCONF},
 		{"block",		BLOCK},
