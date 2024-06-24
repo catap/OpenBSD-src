@@ -579,13 +579,13 @@ extern int hw_power;
 void
 setperf_auto(void *v)
 {
-	static uint64_t *idleticks, *totalticks;
-	static int downbeats;
-	int i, j = 0;
-	int speedup = 0;
+	static struct timespec *idletimes, last;
+	int i = 0;
+	int speedup = 0, load = 0, speed = 0;
+	uint64_t idle, window;
 	CPU_INFO_ITERATOR cii;
 	struct cpu_info *ci;
-	uint64_t idle, total, allidle = 0, alltotal = 0;
+	struct timespec now, ts, its;
 
 	if (perfpolicy != PERFPOL_AUTO)
 		return;
@@ -598,45 +598,65 @@ setperf_auto(void *v)
 		goto faster;
 	}
 
-	if (!idleticks)
-		if (!(idleticks = mallocarray(ncpusfound, sizeof(*idleticks),
+	if (!idletimes)
+		if (!(idletimes = mallocarray(ncpusfound, sizeof(*idletimes),
 		    M_DEVBUF, M_NOWAIT | M_ZERO)))
 			return;
-	if (!totalticks)
-		if (!(totalticks = mallocarray(ncpusfound, sizeof(*totalticks),
-		    M_DEVBUF, M_NOWAIT | M_ZERO))) {
-			free(idleticks, M_DEVBUF,
-			    sizeof(*idleticks) * ncpusfound);
-			return;
-		}
+
+	nanouptime(&now);
+	timespecsub(&now, &last, &ts);
+	last = now;
+	window = TIMESPEC_TO_NSEC(&ts) / 1000000ULL;
+
 	CPU_INFO_FOREACH(cii, ci) {
 		if (!cpu_is_online(ci))
 			continue;
-		total = 0;
-		for (i = 0; i < CPUSTATES; i++) {
-			total += ci->ci_schedstate.spc_cp_time[i];
-		}
-		total -= totalticks[j];
-		idle = ci->ci_schedstate.spc_cp_time[CP_IDLE] - idleticks[j];
-		if (idle < total / 3)
+
+		ts = ci->ci_schedstate.spc_runtime;
+		its = ci->ci_schedstate.spc_idleproc->p_tu.tu_runtime;
+
+		if (ci->ci_curproc == ci->ci_schedstate.spc_idleproc &&
+		    timespeccmp(&ts, &ci->ci_schedstate.spc_runtime, ==) &&
+		    timespeccmp(&now, &ts, >))
+			timespecsub(&now, &ts, &ts);
+		else
+			timespecclear(&ts);
+
+		timespecsub(&its, &idletimes[i], &its);
+		timespecadd(&idletimes[i], &its, &idletimes[i]);
+
+		timespecadd(&ts, &its, &ts);
+
+		idle = TIMESPEC_TO_NSEC(&ts) / 1000000ULL;
+
+		if (idle > window)
+			load = 0;
+		else if (idle <= 0)
+			load = 100;
+		else
+			load = (100 * (window - idle)) / window;
+
+		if (load > 80)
 			speedup = 1;
-		alltotal += total;
-		allidle += idle;
-		idleticks[j] += idle;
-		totalticks[j] += total;
-		j++;
+		else if (load > speed)
+			speed = load;
+
+		i++;
 	}
-	if (allidle < alltotal / 2)
-		speedup = 1;
-	if (speedup && downbeats < 5)
-		downbeats++;
 
 	if (speedup && perflevel != 100) {
 faster:
 		perflevel = 100;
 		cpu_setperf(perflevel);
-	} else if (!speedup && perflevel != 0 && --downbeats <= 0) {
-		perflevel = 0;
+	} else if (!speedup && speed > perflevel && perflevel != 100) {
+		perflevel += 5;
+		if (perflevel > 100)
+		    perflevel = 100;
+		cpu_setperf(perflevel);
+	} else if (!speedup && speed < perflevel && perflevel != 0) {
+		perflevel -= 5;
+		if (perflevel < 0)
+		    perflevel = 0;
 		cpu_setperf(perflevel);
 	}
 
