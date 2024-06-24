@@ -134,6 +134,7 @@ sched_kthreads_create(void *v)
 void
 sched_idle(void *v)
 {
+	struct timespec idle_start, idle_stop = {0, 0};
 	struct schedstate_percpu *spc;
 	struct proc *p = curproc;
 	struct cpu_info *ci = v;
@@ -158,6 +159,8 @@ sched_idle(void *v)
 	KASSERT(ci == curcpu());
 	KASSERT(curproc == spc->spc_idleproc);
 
+	idle_start = idle_stop;
+
 	while (1) {
 		while (!cpu_is_idle(curcpu())) {
 			struct proc *dead;
@@ -179,7 +182,9 @@ sched_idle(void *v)
 
 		cpuset_add(&sched_idle_cpus, ci);
 		cpu_idle_enter();
+		nanouptime(&idle_start);
 		while (spc->spc_whichqs == 0) {
+			// TODO: speeddown
 #ifdef MULTIPROCESSOR
 			if (spc->spc_schedflags & SPCF_SHOULDHALT &&
 			    (spc->spc_schedflags & SPCF_HALTED) == 0) {
@@ -192,7 +197,10 @@ sched_idle(void *v)
 			}
 #endif
 			cpu_idle_cycle();
+
 		}
+		nanouptime(&idle_stop);
+		// TODO: speedup
 		cpu_idle_leave();
 		cpuset_del(&sched_idle_cpus, ci);
 	}
