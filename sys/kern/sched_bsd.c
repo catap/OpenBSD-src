@@ -578,13 +578,14 @@ extern int hw_power;
 void
 setperf_auto(void *v)
 {
-	static struct timespec *idletimes, last;
+	static struct timespec last;
 	int i = 0;
 	int speedup = 0, load = 0, speed = 0;
 	uint64_t idle, window;
 	CPU_INFO_ITERATOR cii;
 	struct cpu_info *ci;
 	struct timespec now, ts, its;
+	struct schedstate_percpu *spc;
 
 	if (perfpolicy != PERFPOL_AUTO)
 		return;
@@ -597,11 +598,6 @@ setperf_auto(void *v)
 		goto faster;
 	}
 
-	if (!idletimes)
-		if (!(idletimes = mallocarray(ncpusfound, sizeof(*idletimes),
-		    M_DEVBUF, M_NOWAIT | M_ZERO)))
-			return;
-
 	nanouptime(&now);
 	timespecsub(&now, &last, &ts);
 	last = now;
@@ -611,18 +607,20 @@ setperf_auto(void *v)
 		if (!cpu_is_online(ci))
 			continue;
 
-		ts = ci->ci_schedstate.spc_runtime;
-		its = ci->ci_schedstate.spc_idleproc->p_tu.tu_runtime;
+		spc = &ci->ci_schedstate;
 
-		if (ci->ci_curproc == ci->ci_schedstate.spc_idleproc &&
-		    timespeccmp(&ts, &ci->ci_schedstate.spc_runtime, ==) &&
+		ts = spc->spc_runtime;
+		its = spc->spc_idleproc->p_tu.tu_runtime;
+
+		if (ci->ci_curproc == spc->spc_idleproc &&
+		    timespeccmp(&ts, &spc->spc_runtime, ==) &&
 		    timespeccmp(&now, &ts, >))
 			timespecsub(&now, &ts, &ts);
 		else
 			timespecclear(&ts);
 
-		timespecsub(&its, &idletimes[i], &its);
-		timespecadd(&idletimes[i], &its, &idletimes[i]);
+		timespecsub(&its, &spc->spc_idletime, &its);
+		timespecadd(&spc->spc_idletime, &its, &spc->spc_idletime);
 
 		timespecadd(&ts, &its, &ts);
 

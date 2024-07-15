@@ -110,6 +110,7 @@ struct schedstate_percpu {
 	TAILQ_HEAD(prochead, proc) spc_qs[SCHED_NQS];
 	LIST_HEAD(,proc) spc_deadproc;
 	struct timespec spc_runtime;	/* time curproc started running */
+	struct timespec spc_idletime;	/* time curproc is idling */
 	volatile int spc_schedflags;	/* flags; see below */
 	u_int spc_schedticks;		/* ticks for schedclock() */
 	u_int64_t spc_cp_time[CPUSTATES]; /* CPU state statistics */
