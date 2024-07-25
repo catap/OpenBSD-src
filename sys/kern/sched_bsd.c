@@ -593,11 +593,6 @@ setperf_auto(void *v)
 	if (cpu_setperf == NULL)
 		return;
 
-	if (hw_power) {
-		speedup = 1;
-		goto faster;
-	}
-
 	nanouptime(&now);
 	timespecsub(&now, &last, &ts);
 	last = now;
@@ -642,7 +637,6 @@ setperf_auto(void *v)
 	}
 
 	if (speedup && perflevel != 100) {
-faster:
 		perflevel = 100;
 		cpu_setperf(perflevel);
 	} else if (!speedup && speed > perflevel && perflevel != 100) {
