@@ -69,9 +69,10 @@ If a domain from this list is queried,
 .Nm unwind
 answers with a return code of
 .Dv REFUSED .
-With
 .Cm log
-blocked queries are logged.
+blocked queries are logged. The list supports limited wildcard
+syntax: domains starting with . (dot) are treated as any subdomains
+on that zone.
 .It Ic forwarder Brq Ar address Oo Ic port Ar number Oc Oo Oo Ic authentication name Ar name Oc Ic DoT Oc ...
 A list of addresses of DNS name servers to forward queries to.
 .Ic port
