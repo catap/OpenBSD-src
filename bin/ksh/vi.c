@@ -75,6 +75,8 @@ static void	vi_error(void);
 static void	vi_macro_reset(void);
 static int	x_vi_putbuf(const char *, size_t);
 static int	isu8cont(unsigned char);
+static void	x_vi_resize(void);
+static void	calc_winsize(void);
 
 #define C_	0x1		/* a valid command that isn't a M_, E_, U_ */
 #define M_	0x2		/* movement command (h, l, etc.) */
@@ -200,6 +202,9 @@ x_vi(char *buf, size_t len)
 {
 	int	c;
 
+	x_resize_cb = NULL;
+	check_sigwinch();
+	x_resize_cb = x_vi_resize;
 	vi_reset(buf, len > LINE ? LINE : len);
 	vi_pprompt(1);
 	x_flush();
@@ -242,6 +247,7 @@ x_vi(char *buf, size_t len)
 		x_flush();
 	}
 
+	x_resize_cb = NULL;
 	x_putc('\r'); x_putc('\n'); x_flush();
 
 	if (c == -1 || len <= (size_t)es->linelen)
@@ -1423,8 +1429,6 @@ free_edstate(struct edstate *old)
 static void
 edit_reset(char *buf, size_t len)
 {
-	const char *p;
-
 	es = &ebuf;
 	es->cbuf = buf;
 	es->cbufsize = len;
@@ -1434,6 +1438,17 @@ edit_reset(char *buf, size_t len)
 	es->linelen = undo->linelen = 0;
 	es->cursor = undo->cursor = 0;
 	es->winleft = undo->winleft = 0;
+
+	calc_winsize();
+	win = 0;
+	morec = ' ';
+	holdlen = 0;
+}
+
+static void
+calc_winsize(void)
+{
+	const char *p;
 
 	cur_col = pwidth = promptlen(prompt, &p);
 	prompt_skip = p - prompt;
@@ -1451,9 +1466,6 @@ edit_reset(char *buf, size_t len)
 	(void) memset(wbuf[0], ' ', wbuf_len);
 	(void) memset(wbuf[1], ' ', wbuf_len);
 	winwidth = x_cols - pwidth - 3;
-	win = 0;
-	morec = ' ';
-	holdlen = 0;
 }
 
 /*
@@ -2302,5 +2314,43 @@ static int
 isu8cont(unsigned char c)
 {
 	return !Flag(FVISHOW8) && (c & (0x80 | 0x40)) == 0x80;
+}
+
+static void
+x_vi_resize(void)
+{
+	int cur = 0, col = 0;
+	int cr_done = 0, cleared = 0;
+
+#ifndef SMALL
+	if (cur_term != NULL) {
+		if (carriage_return != NULL &&
+		    tputs(carriage_return, 1, x_putc) != ERR)
+			cr_done = 1;
+		if (clr_eos != NULL &&
+		    tputs(clr_eos, 1, x_putc) != ERR)
+			cleared = 1;
+	}
+#endif
+	if (!cr_done)
+		x_putc('\r');
+	if (!cleared) {
+		x_putc('\033');
+		x_putc('[');
+		x_putc('J');
+	}
+
+	calc_winsize();
+
+	while (cur < es->linelen)
+		col = newcol((unsigned char) es->cbuf[cur++], col);
+	if (col <= winwidth)
+		es->winleft = 0;
+	else if (outofwin())
+		rewindow();
+
+	redraw_line(0, 0);
+	refresh_line(insert != 0);
+	x_flush();
 }
 #endif	/* VI */

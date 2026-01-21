@@ -26,7 +26,8 @@ X_chars edchars;
 
 static void x_sigwinch(int);
 volatile sig_atomic_t got_sigwinch;
-static void check_sigwinch(void);
+void check_sigwinch(void);
+void (*x_resize_cb)(void);	/* callback for resize during edit */
 
 static int	x_file_glob(int, const char *, int, char ***, int);
 static char	*x_tilde_expand(const char *);
@@ -64,7 +65,7 @@ x_sigwinch(int sig)
 	got_sigwinch = 1;
 }
 
-static void
+void
 check_sigwinch(void)
 {
 	if (got_sigwinch) {
@@ -81,11 +82,16 @@ check_sigwinch(void)
 			 * see the change cause the environ doesn't change.
 			 */
 			if (ws.ws_col) {
+				int old_cols = x_cols;
+
 				x_cols = ws.ws_col < MIN_COLS ? MIN_COLS :
 				    ws.ws_col;
 
 				if ((vp = typeset("COLUMNS", 0, 0, 0, 0)))
 					setint(vp, (int64_t) ws.ws_col);
+
+				if (x_cols != old_cols && x_resize_cb)
+					(*x_resize_cb)();
 			}
 			if (ws.ws_row && (vp = typeset("LINES", 0, 0, 0, 0)))
 				setint(vp, (int64_t) ws.ws_row);
@@ -126,12 +132,14 @@ x_getc(void)
 	char c;
 	int n;
 
-	while ((n = blocking_read(STDIN_FILENO, &c, 1)) < 0 && errno == EINTR)
+	while ((n = blocking_read(STDIN_FILENO, &c, 1)) < 0 && errno == EINTR) {
+		check_sigwinch();
 		if (trap) {
 			x_mode(false);
 			runtraps(0);
 			x_mode(true);
 		}
+	}
 	if (n != 1)
 		return -1;
 	return (int) (unsigned char) c;

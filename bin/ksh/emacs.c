@@ -105,6 +105,7 @@ static int	xlp_valid;
 /* end from 4.9 edit.h } */
 static	int	x_tty;		/* are we on a tty? */
 static	int	x_bind_quiet;	/* be quiet when binding keys */
+static void	x_emacs_resize(void);
 static int	(*x_last_command)(int);
 
 static	char   **x_histp;	/* history position */
@@ -286,6 +287,9 @@ x_emacs(char *buf, size_t len)
 	xmp = NULL;
 	x_histp = histptr + 1;
 
+	x_resize_cb = NULL;
+	check_sigwinch();
+	x_resize_cb = x_emacs_resize;
 	xx_cols = x_cols;
 	x_col = promptlen(prompt, &p);
 	prompt_skip = p - prompt;
@@ -316,8 +320,11 @@ x_emacs(char *buf, size_t len)
 	x_last_command = NULL;
 	while (1) {
 		x_flush();
-		if ((at = x_e_getu8(line, at)) < 0)
+		if ((at = x_e_getu8(line, at)) < 0) {
+			x_resize_cb = NULL;
 			return 0;
+		}
+
 		ntries++;
 
 		if (x_arg == -1) {
@@ -378,6 +385,7 @@ x_emacs(char *buf, size_t len)
 				x_last_command = NULL;
 			break;
 		case KEOL:
+			x_resize_cb = NULL;
 			ret = xep - xbuf;
 			return (ret);
 			break;
@@ -2164,6 +2172,53 @@ x_lastcp(void)
 	}
 	xlp_valid = true;
 	return (xlp);
+}
+
+static void
+x_emacs_resize(void)
+{
+	int cr_done = 0, cleared = 0;
+
+#ifndef SMALL
+	if (cur_term != NULL) {
+		if (carriage_return != NULL &&
+		    tputs(carriage_return, 1, x_putc) != ERR)
+			cr_done = 1;
+		if (clr_eos != NULL &&
+		    tputs(clr_eos, 1, x_putc) != ERR)
+			cleared = 1;
+	}
+#endif
+	if (!cr_done)
+		x_putc('\r');
+	if (!cleared) {
+		x_putc('\033');
+		x_putc('[');
+		x_putc('J');
+	}
+
+	xx_cols = x_cols;
+	x_col = promptlen(prompt, NULL);
+	if (x_col > xx_cols)
+		x_col = x_col - (x_col / xx_cols) * xx_cols;
+	x_displen = xx_cols - 2 - x_col;
+	if (x_displen < 1) {
+		x_col = 0;
+		x_displen = xx_cols - 2;
+		prompt_redraw = 0;
+	} else {
+		xbp = xbuf;
+		xlp_valid = false;
+		if (xcp <= x_lastcp()) {
+			x_redraw(0);
+			x_flush();
+			return;
+		}
+	}
+
+	x_col = 0;
+	x_displen = xx_cols - 2;
+	x_adjust();
 }
 
 #endif /* EMACS */

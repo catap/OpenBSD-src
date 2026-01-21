@@ -233,3 +233,27 @@ testseq "(x)\00330%hrc" " # (x)\b\b\b(x\bc\b"
 
 # ^R: Redraw.
 testseq "test\0033h\0022" " # test\b\b\r\r\n # test\b\b"
+
+# ASCII resize: cols=1/11/12
+testseq "aaaaaaaaaabbbbbbbbbb\0033hhhhhhhhhhhhhhhhhhh\000RS1" \
+	" # aaaaaaaaaabbbbbbbbbb\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\r\033[J# aaaaaaa >\r# "
+testseq "aaaaaaaaaabbbbbbbbbb\0033hhhhhhhhh\000RS11" \
+	" # aaaaaaaaaabbbbbbbbbb\b\b\b\b\b\b\b\b\b\b\r\033[J# aaabbbb +\b\b\b\b\b\b"
+testseq "aaaaaaaaaabbbbbbbbbb\0033\000RS12" \
+	" # aaaaaaaaaabbbbbbbbbb\b\r\033[J# bbbb    <\b\b\b\b\b\b"
+
+# ASCII resize: cols=13, cursor -1/0/+1
+testseq "aaaaaaaaaabbbbbbbbbb\0033hhhhhhhhhhhhh\000RS13" \
+	" # aaaaaaaaaabbbbbbbbbb\b\b\b\b\b\b\b\b\b\b\b\b\b\b\r\033[J # aaaaaaa >\b\b\b"
+testseq "aaaaaaaaaabbbbbbbbbb\0033hhhhhhhhhhhh\000RS13" \
+	" # aaaaaaaaaabbbbbbbbbb\b\b\b\b\b\b\b\b\b\b\b\b\b\r\033[J # aaaaaab +\b\b\b\b\b\b"
+testseq "aaaaaaaaaabbbbbbbbbb\0033hhhhhhhhhhh\000RS13" \
+	" # aaaaaaaaaabbbbbbbbbb\b\b\b\b\b\b\b\b\b\b\b\b\r\033[J # aaaaabb +\b\b\b\b\b\b"
+
+# ASCII resize: cols=79/80/81
+testseq "aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc\0033hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh\000RS79" \
+	" # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccc\r # bbbbbbbbbbbbbcccccccccccccccccccccccc                                      <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bc\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\baaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccccccccccccc >\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\r\033[J # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccc >\r # "
+testseq "aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc\0033hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh\000RS80" \
+	" # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccc\r # bbbbbbbbbbbbbcccccccccccccccccccccccc                                      <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bc\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\baaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccccccccccccc >\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
+testseq "aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc\0033hhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh\000RS81" \
+	" # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccc\r # bbbbbbbbbbbbbcccccccccccccccccccccccc                                      <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bc\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\baaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccccccccccccc >\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\r\033[J # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc >\r # "

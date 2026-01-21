@@ -16,6 +16,7 @@
  */
 
 #include <sys/wait.h>
+#include <sys/ioctl.h>
 
 #include <err.h>
 #include <errno.h>
@@ -49,6 +50,7 @@ main(int argc, char *argv[])
 	ssize_t		 n;
 	size_t		 nin, nprompt, nread, nwrite;
 	int		 c, nready, ptyfd, readprompt, ret, status, timeout;
+	int		 pending_resize, pending_cols, pending_quiet, pending_post;
 
 	while ((c = getopt(argc, argv, "p:")) != -1) {
 		switch (c) {
@@ -96,14 +98,20 @@ main(int argc, char *argv[])
 	}
 
 	nprompt = nread = nwrite = ret = 0;
+	pending_resize = pending_cols = pending_quiet = pending_post = 0;
 	readprompt = 1;
 	while (!gotsig) {
 		pfd.fd = ptyfd;
-		if (!readprompt && nwrite < nin)
-			pfd.events = POLLOUT;
-		else
+		if (pending_resize || pending_post) {
 			pfd.events = POLLIN;
-		timeout = readprompt ? PRTIM : WRTIM;
+			timeout = WRTIM;
+		} else if (!readprompt && nwrite < nin) {
+			pfd.events = POLLOUT;
+			timeout = WRTIM;
+		} else {
+			pfd.events = POLLIN;
+			timeout = readprompt ? PRTIM : WRTIM;
+		}
 		nready = poll(&pfd, 1, timeout);
 		if (nready == -1) {
 			if (errno == EINTR)
@@ -111,6 +119,22 @@ main(int argc, char *argv[])
 			err(1, "poll");
 		}
 		if (nready == 0) {
+			if (pending_resize) {
+				if (++pending_quiet >= 2) {
+					ws.ws_col = pending_cols;
+					if (ioctl(ptyfd, TIOCSWINSZ, &ws) == -1)
+						err(1, "ioctl TIOCSWINSZ");
+					kill(pid, SIGWINCH);
+					pending_resize = pending_cols = 0;
+					pending_quiet = 0;
+					pending_post = 1;
+				}
+				continue;
+			}
+			if (pending_post) {
+				pending_post = 0;
+				continue;
+			}
 			if (timeout == PRTIM) {
 				warnx("timeout waiting from prompt");
 				ret = 1;
@@ -136,6 +160,28 @@ main(int argc, char *argv[])
 				readprompt = 0;
 			}
 		} else if (pfd.revents & POLLOUT) {
+			if (in[nwrite] == '\0' && nwrite + 3 < nin &&
+			    in[nwrite + 1] == 'R' &&
+			    in[nwrite + 2] == 'S' &&
+			    in[nwrite + 3] >= '0' && in[nwrite + 3] <= '9') {
+				size_t i = nwrite + 3;
+				int cols = 0, nd = 0;
+
+				while (i < nin && nd < 3 &&
+				    in[i] >= '0' && in[i] <= '9') {
+					cols = cols * 10 + (in[i] - '0');
+					i++;
+					nd++;
+				}
+				if (nd > 0 && (i == nin ||
+				    in[i] < '0' || in[i] > '9') &&
+				    cols > 0) {
+					pending_resize = 1;
+					pending_cols = cols;
+					nwrite = i;
+					continue;
+				}
+			}
 			if (strchr(linefeed, in[nwrite]) != NULL)
 				readprompt = 1;
 
@@ -143,6 +189,8 @@ main(int argc, char *argv[])
 			if (n == -1)
 				err(1, "write");
 			nwrite += n;
+			if (pending_resize)
+				pending_quiet = 0;
 		}
 	}
 	close(ptyfd);

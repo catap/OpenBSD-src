@@ -52,6 +52,30 @@ testseq "z\0002\0363\0277\0277\0277" " # z\b\0363\0277\0277\0277z\b"
 testseq "z\0002\0364\0200\0200\0200" " # z\b\0364\0200\0200\0200z\b"
 testseq "z\0002\0364\0217\0277\0277" " # z\b\0364\0217\0277\0277z\b"
 
+# ASCII resize: cols=1/11/12
+testseq "aaaaaaaaaabbbbbbbbbb\0001\000RS1" \
+	" # aaaaaaaaaabbbbbbbbbb\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\r\033[J\r # aaaaaaa>\b\b\b\b\b\b\b\b"
+testseq "aaaaaaaaaabbbbbbbbbb\003310\0002\000RS11" \
+	" # aaaaaaaaaabbbbbbbbbb\b\b\b\b\b\b\b\b\b\b\r\033[J\raaaaabbbbb*\b\b\b\b\b\b"
+testseq "aaaaaaaaaabbbbbbbbbb\000RS12" \
+	" # aaaaaaaaaabbbbbbbbbb\r\033[J\rbbbbb     <\b\b\b\b\b\b"
+
+# ASCII resize: cols=13, cursor -1/0/+1
+testseq "aaaaaaaaaabbbbbbbbbb\003313\0002\000RS13" \
+	" # aaaaaaaaaabbbbbbbbbb\b\b\b\b\b\b\b\b\b\b\b\b\b\r\033[J\r # aaaaaaaa>\b\b"
+testseq "aaaaaaaaaabbbbbbbbbb\003312\0002\000RS13" \
+	" # aaaaaaaaaabbbbbbbbbb\b\b\b\b\b\b\b\b\b\b\b\b\r\033[J\r # aaaaaaaa>\b"
+testseq "aaaaaaaaaabbbbbbbbbb\003311\0002\000RS13" \
+	" # aaaaaaaaaabbbbbbbbbb\b\b\b\b\b\b\b\b\b\b\b\r\033[J\raaaaaabbbbb*\b\b\b\b\b\b\b"
+
+# ASCII resize: cols=79/80/81
+testseq "aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc\0001\000RS79" \
+	" # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc\rbbbbbbbbbbbbccccccccccccccccccccccccc                                         <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\r # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc \b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\r\033[J\r # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbcccccccccccccccccccccccc>\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
+testseq "aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc\0001\000RS80" \
+	" # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc\rbbbbbbbbbbbbccccccccccccccccccccccccc                                         <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\r # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc \b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
+testseq "aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc\0001\000RS81" \
+	" # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc\rbbbbbbbbbbbbccccccccccccccccccccccccc                                         <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\r # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc \b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\r\033[J\r # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc \b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
+
 # insertion of incomplete UTF-8
 testseq "z\0002\0302\0006" " # z\b\0302z\bz"
 testseq "z\0002\0377\0006" " # z\b\0377z\bz"
