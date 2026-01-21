@@ -76,6 +76,38 @@ testseq "aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccc
 testseq "aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc\0001\000RS81" \
 	" # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc\rbbbbbbbbbbbbccccccccccccccccccccccccc                                         <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\r # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc \b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\r\033[J\r # aaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbccccccccccccccccccccccccc \b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
 
+# ASCII window indicator at left edge
+testseq "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+	" # aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\rbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb                                         <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
+
+# UTF-8 window indicator at left edge
+testseq "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0303\0266bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" \
+	" # aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0303\0266bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\r\0303\0266bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb                                         <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
+
+# ASCII redraw at right edge
+PS1='012345678901234567890123456789012345678901234567890123456789'
+testseq "#aaaaaaaaaaaaaaaaab\0033#" "012345678901234567890123456789012345678901234567890123456789#aaaaaaaaaaaaaaaaa\raaaaaaaaa                                                                     <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bb\r012345678901234567890123456789012345678901234567890123456789aaaaaaaaaaaaaaaaab \b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
+
+# UTF-8 redraw at right edge
+testseq "#aaaaaaaaaaaaaaaaa\0303\0266\0033#" "012345678901234567890123456789012345678901234567890123456789#aaaaaaaaaaaaaaaaa\raaaaaaaaa                                                                     <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\0303\0266\r012345678901234567890123456789012345678901234567890123456789aaaaaaaaaaaaaaaaa\0303\0266 \b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
+PS1=' # '
+
+# ASCII window indicator at right edge
+testseq "\003342ab\003397b\0001" \
+	" # aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\raaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb                                         <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\rbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb                                       <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bbbbbbbbbbbbbbbbbbbbbbbbb\r # aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb>\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
+
+# UTF-8 window indicator at right edge
+testseq "\003342a\0303\0266\003397b\0001" \
+	" # aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0303\0266bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\raaaa\0303\0266bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb                                         <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\rbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb                                       <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bbbbbbbbbbbbbbbbbbbbbbbbb\r # aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0303\0266bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb>\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
+
+# ASCII window indicator on both sides
+testseq "\003342ab\003397b\0001\003379\0006" \
+	" # aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\raaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb                                         <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\rbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb                                       <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bbbbbbbbbbbbbbbbbbbbbbbbb\r # aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaabbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb>\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\rbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb*\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
+
+# UTF-8 window indicator on both sides
+testseq "\003342a\0303\0266\003397b\0001\003379\0006" \
+	" # aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0303\0266bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\raaaa\0303\0266bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb                                         <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\rbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb                                       <\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\bbbbbbbbbbbbbbbbbbbbbbbbb\r # aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\0303\0266bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb>\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\ra\0303\0266bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb*\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b\b"
+
 # insertion of incomplete UTF-8
 testseq "z\0002\0302\0006" " # z\b\0302z\bz"
 testseq "z\0002\0377\0006" " # z\b\0377z\bz"
