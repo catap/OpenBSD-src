@@ -24,6 +24,7 @@
 
 #undef CTRL
 #define	CTRL(x)		((x) & 0x1F)	/* ASCII */
+#define UTF8_MAXBYTES	4
 
 struct edstate {
 	char	*cbuf;		/* main buffer to build the command line */
@@ -1369,7 +1370,7 @@ static int	prompt_trunc;		/* how much of prompt to truncate */
 static int	prompt_skip;		/* how much of prompt to skip */
 static int	winwidth;		/* available column positions */
 static char	*wbuf[2];		/* current & previous window buffer */
-static int	wbuf_len;		/* length of window buffers (x_cols-3)*/
+static int	wbuf_len;		/* length of window buffers */
 static int	win;			/* number of window buffer in use */
 static char	morec;			/* more character at right of window */
 static char	holdbuf[LINE];		/* place to hold last edit buffer */
@@ -1449,6 +1450,7 @@ static void
 calc_winsize(void)
 {
 	const char *p;
+	int newlen;
 
 	cur_col = pwidth = promptlen(prompt, &p);
 	prompt_skip = p - prompt;
@@ -1458,8 +1460,9 @@ calc_winsize(void)
 		pwidth -= prompt_trunc;
 	} else
 		prompt_trunc = 0;
-	if (!wbuf_len || wbuf_len != x_cols - 3) {
-		wbuf_len = x_cols - 3;
+	newlen = (x_cols - 3) * UTF8_MAXBYTES;
+	if (!wbuf_len || wbuf_len != newlen) {
+		wbuf_len = newlen;
 		wbuf[0] = aresize(wbuf[0], wbuf_len, APERM);
 		wbuf[1] = aresize(wbuf[1], wbuf_len, APERM);
 	}
@@ -1882,6 +1885,7 @@ display(char *wb1, char *wb2, int leftside)
 	int	 ncol;	/* display column of the cursor */
 	int	 cnt;	/* remaining display columns to fill */
 	int	 moreright;
+	int	 trailu8;
 	char	 mc;	/* new "more character" at the right of window */
 	unsigned char ch;
 
@@ -1893,8 +1897,11 @@ display(char *wb1, char *wb2, int leftside)
 	ncol = col = 0;
 	cur = es->winleft;
 	moreright = 0;
+	trailu8 = 0;
 	twb1 = wb1;
-	while (col < winwidth && cur < es->linelen) {
+	while (cur < es->linelen &&
+	    (col < winwidth ||
+	    (col == winwidth && isu8cont(es->cbuf[cur])))) {
 		if (cur == es->cursor && leftside)
 			ncol = col + pwidth;
 		if ((ch = es->cbuf[cur]) == '\t') {
@@ -1910,7 +1917,8 @@ display(char *wb1, char *wb2, int leftside)
 				}
 				ch &= 0x7f;
 			}
-			if (col < winwidth) {
+			if (col < winwidth ||
+			    (col == winwidth && isu8cont(ch))) {
 				if (ch < ' ' || ch == 0x7f) {
 					*twb1++ = '^';
 					if (++col < winwidth) {
@@ -1918,6 +1926,8 @@ display(char *wb1, char *wb2, int leftside)
 						col++;
 					}
 				} else {
+					if (col == winwidth && isu8cont(ch))
+						trailu8 = 1;
 					*twb1++ = ch;
 					if (col == 0 || !isu8cont(ch))
 						col++;
@@ -2010,8 +2020,10 @@ display(char *wb1, char *wb2, int leftside)
 		mc = '>';
 	else
 		mc = ' ';
-	if (mc != morec) {
-		ed_mov_opt(pwidth + winwidth + 1, wb1);
+	if (mc != morec || trailu8) {
+		ed_mov_opt(pwidth + winwidth, wb1);
+		x_putc(' ');
+		cur_col++;
 		x_putc(mc);
 		cur_col++;
 		morec = mc;
