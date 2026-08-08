@@ -40,6 +40,7 @@ SORTR=		cat
 COPTIMIZE?=	-Oz
 .endif
 .if ${COMPILER_VERSION:Mclang}
+CMACHFLAGS+=	-mcmodel=medlow
 NO_INTEGR_AS=	-no-integrated-as
 CWARNFLAGS+=	-Wno-unused-command-line-argument
 CWARNFLAGS+=	-Wno-address-of-packed-member -Wno-constant-conversion \

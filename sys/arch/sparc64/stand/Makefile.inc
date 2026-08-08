@@ -17,6 +17,10 @@ CPPFLAGS+=	-I.
 CFLAGS+=	-fno-stack-protector
 CFLAGS+=	-msoft-float
 CFLAGS+=	-ffreestanding
+.include <bsd.own.mk>
+.if ${COMPILER_VERSION:Mclang}
+CFLAGS+=	-mcmodel=medlow
+.endif
 .endif
 
 ### Figure out what to use for libsa
