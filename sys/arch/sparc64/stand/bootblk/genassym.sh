@@ -164,9 +164,9 @@ $0 ~ /^endif/ {
 		printf("printf(\"#define " $2 " %%ld\\n\", (%s)" value ");\n", type);
 	else if (fcode) {
 		if (doing_member)
-			printf("__asm(\"XYZZY : %s d# %%%s0 + ;\" : : \"%s\" (%s));\n", $2, asmprint, asmtype, value);
+			printf("__asm(\".ascii \\\"XYZZY : %s d# %%%s0 + ;\\\"\" : : \"%s\" (%s));\n", $2, asmprint, asmtype, value);
 		else
-			printf("__asm(\"XYZZY d# %%%s0 constant %s\" : : \"%s\" (%s));\n", asmprint, $2, asmtype, value);
+			printf("__asm(\".ascii \\\"XYZZY d# %%%s0 constant %s\\\"\" : : \"%s\" (%s));\n", asmprint, $2, asmtype, value);
 	} else
 		printf("__asm(\"XYZZY %s %%%s0\" : : \"%s\" (%s));\n", $2, asmprint, asmtype, value);
 	next;
@@ -204,7 +204,7 @@ elif [ "$fcode" = 1 ]; then
 	# Kill all of the "#" and "$" modifiers; locore.s already
 	# prepends the correct "constant" modifier.
 	"$@" -S "${genassym_temp}/assym.c" -o - | sed -e 's/\$//g' | \
-	    sed -n 's/.*XYZZY//gp'
+	    sed -n 's/.*\.ascii[[:space:]]*"XYZZY\([^"]*\)".*/\1/p'
 else
 	# Kill all of the "#" and "$" modifiers; locore.s already
 	# prepends the correct "constant" modifier.
