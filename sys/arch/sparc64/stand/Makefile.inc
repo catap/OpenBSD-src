@@ -20,6 +20,7 @@ CFLAGS+=	-ffreestanding
 .include <bsd.own.mk>
 .if ${COMPILER_VERSION:Mclang}
 CFLAGS+=	-mcmodel=medlow
+CFLAGS+=	-Oz
 .endif
 .endif
 
