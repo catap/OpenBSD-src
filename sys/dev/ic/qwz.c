@@ -24514,6 +24514,31 @@ qwz_bgscan(struct ieee80211com *ic)
 }
 
 void
+qwz_bgscan_cancel(struct qwz_softc *sc)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ifnet *ifp = &ic->ic_if;
+
+	if (sc->bgscan_unref_arg == NULL)
+		return;
+
+	free(sc->bgscan_unref_arg, M_DEVBUF, sc->bgscan_unref_arg_size);
+	sc->bgscan_unref_arg = NULL;
+	sc->bgscan_unref_arg_size = 0;
+	ic->ic_flags &= ~IEEE80211_F_BGSCAN;
+
+	if ((ifp->if_flags & IFF_RUNNING) &&
+	    ic->ic_state == IEEE80211_S_RUN &&
+	    sc->ns_nstate == IEEE80211_S_RUN &&
+	    !test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) &&
+	    !test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) &&
+	    !test_bit(QWZ_FLAG_ROAMING, sc->sc_flags)) {
+		ic->ic_xflags &= ~IEEE80211_F_TX_MGMT_ONLY;
+		(*ifp->if_start)(ifp);
+	}
+}
+
+void
 qwz_bgscan_done_task(void *arg)
 {
 	struct qwz_softc *sc = arg;
@@ -24528,6 +24553,7 @@ qwz_bgscan_done_task(void *arg)
 
 	/* Prevent races with ifconfig commands. */
 	if (rw_enter(&sc->ioctl_rwl, RW_WRITE | RW_NOSLEEP) != 0) {
+		qwz_bgscan_cancel(sc);
 		refcnt_rele_wake(&sc->task_refs);
 		splx(s);
 		return;
@@ -24542,7 +24568,7 @@ qwz_bgscan_done_task(void *arg)
 	    test_bit(QWZ_FLAG_ROAMING, sc->sc_flags) ||
 	    ic->ic_state != IEEE80211_S_RUN ||
 	    sc->ns_nstate != IEEE80211_S_RUN) {
-		/* Don't touch the device, just return. */
+		qwz_bgscan_cancel(sc);
 		rw_exit(&sc->ioctl_rwl);
 		refcnt_rele_wake(&sc->task_refs);
 		splx(s);
