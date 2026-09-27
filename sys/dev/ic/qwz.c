@@ -24338,6 +24338,7 @@ qwz_scan(struct qwz_softc *sc, int bgscan)
 	arg = malloc(sizeof(*arg), M_DEVBUF, M_ZERO | M_NOWAIT);
 	if (!arg) {
 		ret = ENOMEM;
+		sc->scan.state = ATH12K_SCAN_IDLE;
 		goto exit;
 	}
 
@@ -24378,6 +24379,7 @@ qwz_scan(struct qwz_softc *sc, int bgscan)
 
 		if (!arg->chan_list) {
 			ret = ENOMEM;
+			sc->scan.state = ATH12K_SCAN_IDLE;
 			goto exit;
 		}
 
@@ -24489,14 +24491,20 @@ qwz_bgscan_task(void *arg)
 {
 	struct qwz_softc *sc = arg;
 	struct ieee80211com *ic = &sc->sc_ic;
-	int s = splnet();
+	int ret = EBUSY, s = splnet();
 
 	if ((ic->ic_if.if_flags & IFF_RUNNING) &&
 	    ic->ic_state == IEEE80211_S_RUN &&
+	    sc->ns_nstate == IEEE80211_S_RUN &&
+	    (ic->ic_flags & IEEE80211_F_BGSCAN) &&
 	    sc->scan.state == ATH12K_SCAN_IDLE &&
 	    !test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) &&
 	    !test_bit(QWZ_FLAG_STOPPING, sc->sc_flags))
-		qwz_scan(sc, 1);
+		ret = qwz_scan(sc, 1);
+
+	/* Scan completion may already have handed ownership to roaming. */
+	if (ret != 0 && sc->bgscan_unref_arg == NULL)
+		ic->ic_flags &= ~IEEE80211_F_BGSCAN;
 
 	refcnt_rele_wake(&sc->task_refs);
 	splx(s);
@@ -24507,10 +24515,23 @@ qwz_bgscan(struct ieee80211com *ic)
 {
 	struct ifnet *ifp = &ic->ic_if;
 	struct qwz_softc *sc = ifp->if_softc;
+	int ret = EBUSY, s = splnet();
+
+	if ((ifp->if_flags & IFF_RUNNING) == 0 ||
+	    ic->ic_state != IEEE80211_S_RUN ||
+	    sc->ns_nstate != IEEE80211_S_RUN ||
+	    sc->scan.state != ATH12K_SCAN_IDLE ||
+	    test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+	    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
+	    task_pending(&sc->bgscan_task))
+		goto out;
 
 	qwz_add_task(sc, systq, &sc->bgscan_task);
+	ret = 0;
 
-	return 0;
+out:
+	splx(s);
+	return ret;
 }
 
 void
