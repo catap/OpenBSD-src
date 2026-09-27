@@ -422,6 +422,7 @@ enum ath12k_dev_flags {
 	ATH12K_FLAG_DEVICE_INIT_DONE,
 	ATH12K_FLAG_MULTI_MSI_VECTORS,
 	QWZ_FLAG_ROAMING,
+	QWZ_FLAG_STOPPING,
 };
 
 enum ath12k_scan_state {

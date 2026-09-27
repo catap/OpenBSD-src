@@ -252,6 +252,7 @@ qwz_init(struct ifnet *ifp)
 			refcnt_init(&sc->task_refs);
 			ifq_clr_oactive(&ifp->if_snd);
 			ifp->if_flags |= IFF_RUNNING;
+			clear_bit(QWZ_FLAG_STOPPING, sc->sc_flags);
 			sc->ops.irq_enable(sc);
 			ieee80211_begin_scan(ifp);
 		}
@@ -360,6 +361,7 @@ qwz_init(struct ifnet *ifp)
 		ifq_clr_oactive(&ifp->if_snd);
 		ifp->if_flags |= IFF_RUNNING;
 
+		clear_bit(QWZ_FLAG_STOPPING, sc->sc_flags);
 		sc->ops.irq_enable(sc);
 		ieee80211_begin_scan(ifp);
 	}
@@ -379,7 +381,8 @@ qwz_add_task(struct qwz_softc *sc, struct taskq *taskq, struct task *task)
 {
 	int s = splnet();
 
-	if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags)) {
+	if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+	    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags)) {
 		splx(s);
 		return;
 	}
@@ -459,8 +462,13 @@ qwz_stop(struct ifnet *ifp)
 	int s = splnet();
 
 	rw_assert_wrlock(&sc->ioctl_rwl);
+	set_bit(QWZ_FLAG_STOPPING, sc->sc_flags);
+	qwz_del_task(sc, sc->sc_nswq, &sc->newstate_task);
+	qwz_del_task(sc, sc->sc_nswq, &sc->updatechan_task);
+	taskq_barrier(sc->sc_nswq);
 
-	if (ic->ic_opmode == IEEE80211_M_STA &&
+	if (sc->sc_vif.is_up &&
+	    ic->ic_opmode == IEEE80211_M_STA &&
 	    ic->ic_state == IEEE80211_S_RUN &&
 	    (ic->ic_bss->ni_flags & IEEE80211_NODE_MFP) &&
 	    ic->ic_bss->ni_port_valid)
@@ -489,7 +497,7 @@ qwz_stop(struct ifnet *ifp)
 
 	/* Tear down firmware-side association so we can re-associate. */
 	if (sc->num_created_vdevs != 0) {
-		if (ic->ic_state == IEEE80211_S_RUN)
+		if (sc->sc_vif.is_up)
 			qwz_run_stop(sc);
 		if (ic->ic_state >= IEEE80211_S_AUTH ||
 		    sc->num_started_vdevs > 0 || !TAILQ_EMPTY(&sc->peers))
@@ -722,6 +730,10 @@ qwz_queue_setkey_cmd(struct ieee80211com *ic, struct ieee80211_node *ni,
 	struct qwz_softc *sc = ic->ic_softc;
 	struct qwz_setkey_task_arg *a;
 
+	if (test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
+	    test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags))
+		return ESHUTDOWN;
+
 	if (sc->setkey_nkeys >= nitems(sc->setkey_arg) ||
 	    k->k_id > WMI_MAX_KEY_INDEX)
 		return ENOSPC;
@@ -917,6 +929,7 @@ qwz_add_sta_key(struct qwz_softc *sc, struct ieee80211_node *ni,
 	}
 
 	if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+	    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
 	    (ic->ic_if.if_flags & IFF_RUNNING) == 0 ||
 	    ic->ic_state != IEEE80211_S_RUN ||
 	    sc->ns_nstate != IEEE80211_S_RUN)
@@ -947,6 +960,7 @@ qwz_add_sta_key(struct qwz_softc *sc, struct ieee80211_node *ni,
 		}
 
 		if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+		    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
 		    (ic->ic_if.if_flags & IFF_RUNNING) == 0 ||
 		    ic->ic_state != IEEE80211_S_RUN ||
 		    sc->ns_nstate != IEEE80211_S_RUN)
@@ -976,6 +990,7 @@ qwz_del_sta_key(struct qwz_softc *sc, struct ieee80211_node *ni,
 	}
 
 	if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+	    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
 	    (ic->ic_if.if_flags & IFF_RUNNING) == 0 ||
 	    ic->ic_state != IEEE80211_S_RUN ||
 	    sc->ns_nstate != IEEE80211_S_RUN)
@@ -1006,7 +1021,8 @@ qwz_setkey_task(void *arg)
 	int err = 0, s = splnet();
 
 	while (sc->setkey_nkeys > 0) {
-		if (err || test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags))
+		if (err || test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+		    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags))
 			break;
 		a = sc->setkey_arg[sc->setkey_tail];
 		memset(&sc->setkey_arg[sc->setkey_tail], 0,
@@ -1131,6 +1147,7 @@ qwz_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 
 	/* We may get triggered by received frames during qwz_stop(). */
 	if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+	    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
 	    !(ifp->if_flags & IFF_RUNNING))
 		return 0;
 
@@ -1170,7 +1187,8 @@ qwz_newstate_task(void *arg)
 	enum ieee80211_state ostate = ic->ic_state;
 	int err = 0, s = splnet();
 
-	if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags)) {
+	if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+	    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags)) {
 		/* qwz_stop() is waiting for us. */
 		refcnt_rele_wake(&sc->task_refs);
 		splx(s);
@@ -1228,7 +1246,8 @@ qwz_newstate_task(void *arg)
 		}
 
 		/* Die now if qwz_stop() was called while we were sleeping. */
-		if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags)) {
+		if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+		    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags)) {
 			refcnt_rele_wake(&sc->task_refs);
 			splx(s);
 			return;
@@ -1244,6 +1263,9 @@ next_scan:
 		err = qwz_scan(sc, 0);
 		if (err)
 			break;
+		if (test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
+		    test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags))
+			goto out;
 		if (ifp->if_flags & IFF_DEBUG)
 			printf("%s: %s -> %s\n", ifp->if_xname,
 			    ieee80211_state_name[ic->ic_state],
@@ -1269,6 +1291,7 @@ next_scan:
 	}
 out:
 	if (!test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) &&
+	    !test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) &&
 	    (ifp->if_flags & IFF_RUNNING)) {
 		if (err)
 			task_add(systq, &sc->init_task);
@@ -24471,7 +24494,8 @@ qwz_bgscan_task(void *arg)
 	if ((ic->ic_if.if_flags & IFF_RUNNING) &&
 	    ic->ic_state == IEEE80211_S_RUN &&
 	    sc->scan.state == ATH12K_SCAN_IDLE &&
-	    !test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags))
+	    !test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) &&
+	    !test_bit(QWZ_FLAG_STOPPING, sc->sc_flags))
 		qwz_scan(sc, 1);
 
 	refcnt_rele_wake(&sc->task_refs);
@@ -24511,17 +24535,25 @@ qwz_bgscan_done_task(void *arg)
 
 	/* Ensure that we start in expected state. */
 	if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+	    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
 	    (ifp->if_flags & IFF_RUNNING) == 0 ||
 	    (ic->ic_flags & IEEE80211_F_BGSCAN) == 0 ||
 	    (ic->ic_xflags & IEEE80211_F_TX_MGMT_ONLY) == 0 ||
 	    test_bit(QWZ_FLAG_ROAMING, sc->sc_flags) ||
-	    ic->ic_state != IEEE80211_S_RUN) {
+	    ic->ic_state != IEEE80211_S_RUN ||
+	    sc->ns_nstate != IEEE80211_S_RUN) {
 		/* Don't touch the device, just return. */
 		rw_exit(&sc->ioctl_rwl);
 		refcnt_rele_wake(&sc->task_refs);
 		splx(s);
 		return;
 	}
+
+	set_bit(QWZ_FLAG_STOPPING, sc->sc_flags);
+	qwz_del_task_all(sc);
+	/* State and channel tasks can sleep with the old peer in use. */
+	taskq_barrier(sc->sc_nswq);
+	qwz_setkey_clear(sc);
 
 	/* Send a DEAUTH frame to our old AP. */
 	err = IEEE80211_SEND_MGMT(ic, ni, IEEE80211_FC0_SUBTYPE_DEAUTH,
@@ -24534,11 +24566,6 @@ qwz_bgscan_done_task(void *arg)
 
 	/* Disallow new tasks. */
 	set_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags);
-
-	qwz_del_task_all(sc);
-	/* State and channel tasks can sleep with the old peer in use. */
-	taskq_barrier(sc->sc_nswq);
-	qwz_setkey_clear(sc);
 
 	/* Wait for Tx queues to drain. */
 	for (i = 0; i < sc->hw_params.max_tx_ring; i++) {
@@ -24612,6 +24639,7 @@ qwz_bgscan_done_task(void *arg)
 
 	/* Allow roaming to proceed. */
 	set_bit(QWZ_FLAG_ROAMING, sc->sc_flags);
+	clear_bit(QWZ_FLAG_STOPPING, sc->sc_flags);
 	ifp->if_flags |= IFF_RUNNING;
 	ni->ni_unref_arg = sc->bgscan_unref_arg;
 	ni->ni_unref_arg_size = sc->bgscan_unref_arg_size;
@@ -25083,6 +25111,7 @@ qwz_updatechan_task(void *arg)
 
 	if ((ifp->if_flags & IFF_RUNNING) == 0 ||
 	    test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+	    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
 	    ic->ic_state != IEEE80211_S_RUN ||
 	    sc->ns_nstate != IEEE80211_S_RUN)
 		goto out;
@@ -25117,6 +25146,7 @@ qwz_updatechan_task(void *arg)
 
 		if ((ifp->if_flags & IFF_RUNNING) == 0 ||
 		    test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+		    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
 		    sc->ns_nstate != IEEE80211_S_RUN)
 			goto out;
 
@@ -25148,6 +25178,7 @@ qwz_updatechan_task(void *arg)
 
 		if ((ifp->if_flags & IFF_RUNNING) == 0 ||
 		    test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+		    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
 		    sc->ns_nstate != IEEE80211_S_RUN)
 			goto out;
 
@@ -25178,6 +25209,7 @@ qwz_updatechan(struct ieee80211com *ic)
 
 	if ((ic->ic_if.if_flags & IFF_RUNNING) == 0 ||
 	    test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+	    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
 	    ic->ic_state != IEEE80211_S_RUN ||
 	    sc->ns_nstate != IEEE80211_S_RUN)
 		return;
@@ -25253,7 +25285,8 @@ qwz_ba_task(void *arg)
 	int tid;
 
 	for (tid = 0; tid < IEEE80211_NUM_TID; tid++) {
-		if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags))
+		if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+		    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags))
 			break;
 		if (sc->ba_rx.start_tidmask & (1 << tid)) {
 			struct ieee80211_rx_ba *ba = &ni->ni_rx_ba[tid];
