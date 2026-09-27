@@ -421,6 +421,7 @@ enum ath12k_dev_flags {
 	ATH12K_FLAG_FIXED_MEM_RGN,
 	ATH12K_FLAG_DEVICE_INIT_DONE,
 	ATH12K_FLAG_MULTI_MSI_VECTORS,
+	QWZ_FLAG_ROAMING,
 };
 
 enum ath12k_scan_state {
@@ -2009,6 +2010,11 @@ struct qwz_softc {
 	struct task		ba_task;
 	struct qwz_ba_task_data	ba_rx;
 
+	struct task		bgscan_task;
+	struct task		bgscan_done_task;
+	struct ieee80211_node_switch_bss_arg *bgscan_unref_arg;
+	size_t			bgscan_unref_arg_size;
+
 	enum ath12k_11d_state	state_11d;
 	int			completed_11d_scan;
 	uint32_t		vdev_id_11d_scan;
@@ -2181,6 +2187,9 @@ void	qwz_watchdog(struct ifnet *);
 void	qwz_init_task(void *);
 int	qwz_newstate(struct ieee80211com *, enum ieee80211_state, int);
 void	qwz_newstate_task(void *);
+int	qwz_bgscan(struct ieee80211com *);
+void	qwz_bgscan_done(struct ieee80211com *,
+    struct ieee80211_node_switch_bss_arg *, size_t);
 
 struct qwz_node {
 	struct ieee80211_node ni;
