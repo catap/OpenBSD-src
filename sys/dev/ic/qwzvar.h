@@ -1986,6 +1986,7 @@ struct qwz_softc {
 	struct refcnt		task_refs;
 	struct taskq		*sc_nswq;
 	struct task		newstate_task;
+	struct task		updatechan_task;
 	enum ieee80211_state	ns_nstate;
 	int			ns_arg;
 
@@ -2190,10 +2191,12 @@ void	qwz_newstate_task(void *);
 int	qwz_bgscan(struct ieee80211com *);
 void	qwz_bgscan_done(struct ieee80211com *,
     struct ieee80211_node_switch_bss_arg *, size_t);
+void	qwz_updatechan(struct ieee80211com *);
 
 struct qwz_node {
 	struct ieee80211_node ni;
 	uint16_t peer_id;
+	enum wmi_peer_chwidth chwidth;
 	unsigned int flags;
 #define QWZ_NODE_FLAG_HAVE_PAIRWISE_KEY	0x01
 #define QWZ_NODE_FLAG_HAVE_GROUP_KEY	0x02

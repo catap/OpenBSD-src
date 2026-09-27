@@ -1004,8 +1004,8 @@ qwz_pci_attach(struct device *parent, struct device *self, void *aux)
 	ic->ic_newstate = qwz_newstate;
 	ic->ic_set_key = qwz_set_key;
 	ic->ic_delete_key = qwz_delete_key;
-#if 0
 	ic->ic_updatechan = qwz_updatechan;
+#if 0
 	ic->ic_updateprot = qwz_updateprot;
 	ic->ic_updateslot = qwz_updateslot;
 	ic->ic_updateedca = qwz_updateedca;

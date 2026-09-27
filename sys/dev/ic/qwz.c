@@ -401,6 +401,7 @@ void
 qwz_del_task_all(struct qwz_softc *sc)
 {
 	qwz_del_task(sc, sc->sc_nswq, &sc->newstate_task);
+	qwz_del_task(sc, sc->sc_nswq, &sc->updatechan_task);
 	qwz_del_task(sc, systq, &sc->setkey_task);
 	qwz_del_task(sc, systq, &sc->ba_task);
 	qwz_del_task(sc, systq, &sc->bgscan_task);
@@ -1092,6 +1093,7 @@ qwz_newstate(struct ieee80211com *ic, enum ieee80211_state nstate, int arg)
 	    nstate != IEEE80211_S_AUTH)
 		return 0;
 	if (ic->ic_state == IEEE80211_S_RUN) {
+		qwz_del_task(sc, sc->sc_nswq, &sc->updatechan_task);
 		qwz_del_task(sc, systq, &sc->ba_task);
 		qwz_del_task(sc, systq, &sc->setkey_task);
 		qwz_setkey_clear(sc);
@@ -24454,6 +24456,8 @@ qwz_bgscan_done_task(void *arg)
 	set_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags);
 
 	qwz_del_task_all(sc);
+	/* State and channel tasks can sleep with the old peer in use. */
+	taskq_barrier(sc->sc_nswq);
 	qwz_setkey_clear(sc);
 
 	/* Wait for Tx queues to drain. */
@@ -24988,6 +24992,124 @@ qwz_peer_assoc_prepare(struct qwz_softc *sc, struct qwz_vif *arvif,
 }
 
 void
+qwz_updatechan_task(void *arg)
+{
+	struct qwz_softc *sc = arg;
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ifnet *ifp = &ic->ic_if;
+	struct qwz_vif *arvif = &sc->sc_vif;
+	struct ieee80211_node *ni = ic->ic_bss;
+	struct qwz_node *nq = (struct qwz_node *)ic->ic_bss;
+	int pdev_id = 0; /* TODO: derive pdev ID somehow? */
+	struct peer_assoc_params peer_arg = {0};
+	enum wmi_peer_chwidth chwidth;
+	int ret, s = splnet();
+
+	if ((ifp->if_flags & IFF_RUNNING) == 0 ||
+	    test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+	    ic->ic_state != IEEE80211_S_RUN ||
+	    sc->ns_nstate != IEEE80211_S_RUN)
+		goto out;
+
+	qwz_peer_assoc_h_phymode(sc, ni, &peer_arg);
+	qwz_peer_assoc_h_ht(sc, ni, &peer_arg);
+
+	if (peer_arg.bw_40)
+		chwidth = WMI_PEER_CHWIDTH_40MHZ;
+	else
+		chwidth = WMI_PEER_CHWIDTH_20MHZ;
+
+	if (nq->chwidth == chwidth)
+		goto out;
+
+	if (nq->chwidth < chwidth) {
+		/*
+		 * BW is upgraded. In this case we send WMI_PEER_PHYMODE
+		 * followed by WMI_PEER_CHWIDTH.
+		 */
+		ret = qwz_wmi_set_peer_param(sc, ni->ni_macaddr,
+		    arvif->vdev_id, pdev_id, WMI_PEER_PHYMODE,
+		    peer_arg.peer_phymode);
+		if (ret) {
+			printf("%s: failed to update phymode for peer %s "
+			    "vdev_id %d\n",
+			    sc->sc_dev.dv_xname,
+			    ether_sprintf(ni->ni_macaddr),
+			    arvif->vdev_id);
+			goto out;
+		}
+
+		if ((ifp->if_flags & IFF_RUNNING) == 0 ||
+		    test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+		    sc->ns_nstate != IEEE80211_S_RUN)
+			goto out;
+
+		ret = qwz_wmi_set_peer_param(sc, ni->ni_macaddr,
+		    arvif->vdev_id, pdev_id, WMI_PEER_CHWIDTH, chwidth);
+		if (ret) {
+			printf("%s: failed to update channel width for peer %s "
+			    "vdev_id %d\n",
+			    sc->sc_dev.dv_xname,
+			    ether_sprintf(ni->ni_macaddr),
+			    arvif->vdev_id);
+			goto out;
+		}
+	} else {
+		/*
+		 * BW is downgraded. In this case we send WMI_PEER_CHWIDTH
+		 * followed by WMI_PEER_PHYMODE.
+		 */
+		ret = qwz_wmi_set_peer_param(sc, ni->ni_macaddr,
+		    arvif->vdev_id, pdev_id, WMI_PEER_CHWIDTH, chwidth);
+		if (ret) {
+			printf("%s: failed to update channel width for peer %s "
+			    "vdev_id %d\n",
+			    sc->sc_dev.dv_xname,
+			    ether_sprintf(ni->ni_macaddr),
+			    arvif->vdev_id);
+			goto out;
+		}
+
+		if ((ifp->if_flags & IFF_RUNNING) == 0 ||
+		    test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+		    sc->ns_nstate != IEEE80211_S_RUN)
+			goto out;
+
+		ret = qwz_wmi_set_peer_param(sc, ni->ni_macaddr,
+		    arvif->vdev_id, pdev_id, WMI_PEER_PHYMODE,
+		    peer_arg.peer_phymode);
+		if (ret) {
+			printf("%s: failed to update phymode for peer %s "
+			    "vdev_id %d\n",
+			    sc->sc_dev.dv_xname,
+			    ether_sprintf(ni->ni_macaddr),
+			    arvif->vdev_id);
+			goto out;
+		}
+
+	}
+
+	nq->chwidth = chwidth;
+out:
+	refcnt_rele_wake(&sc->task_refs);
+	splx(s);
+}
+
+void
+qwz_updatechan(struct ieee80211com *ic)
+{
+	struct qwz_softc *sc = ic->ic_softc;
+
+	if ((ic->ic_if.if_flags & IFF_RUNNING) == 0 ||
+	    test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
+	    ic->ic_state != IEEE80211_S_RUN ||
+	    sc->ns_nstate != IEEE80211_S_RUN)
+		return;
+
+	qwz_add_task(sc, sc->sc_nswq, &sc->updatechan_task);
+}
+
+void
 qwz_rx_agg_start(struct qwz_softc *sc, struct ieee80211_node *ni, uint8_t tid,
     uint16_t ssn, uint16_t winsize)
 {
@@ -25210,6 +25332,7 @@ qwz_run(struct qwz_softc *sc)
 {
 	struct ieee80211com *ic = &sc->sc_ic;
 	struct ieee80211_node *ni = ic->ic_bss;
+	struct qwz_node *nq = (struct qwz_node *)ni;
 	struct qwz_vif *arvif = &sc->sc_vif;
 	uint8_t pdev_id = 0; /* TODO: derive pdev ID somehow? */
 	struct peer_assoc_params peer_arg;
@@ -25275,6 +25398,10 @@ qwz_run(struct qwz_softc *sc)
 	}
 
 	arvif->is_up = 1;
+	if (peer_arg.bw_40)
+		nq->chwidth = WMI_PEER_CHWIDTH_40MHZ;
+	else
+		nq->chwidth = WMI_PEER_CHWIDTH_20MHZ;
 #if 0
 	arvif->rekey_data.enable_offload = 0;
 #endif
@@ -25349,6 +25476,7 @@ qwz_attach(struct qwz_softc *sc)
 
 	task_set(&sc->init_task, qwz_init_task, sc);
 	task_set(&sc->newstate_task, qwz_newstate_task, sc);
+	task_set(&sc->updatechan_task, qwz_updatechan_task, sc);
 	task_set(&sc->setkey_task, qwz_setkey_task, sc);
 	task_set(&sc->ba_task, qwz_ba_task, sc);
 	task_set(&sc->bgscan_task, qwz_bgscan_task, sc);
