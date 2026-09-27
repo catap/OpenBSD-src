@@ -1990,6 +1990,8 @@ struct qwz_softc {
 	enum ieee80211_state	ns_nstate;
 	int			ns_arg;
 
+	int			deauth_sent;
+
 	/* Task for setting encryption keys and its arguments. */
 	struct task		setkey_task;
 	/*
