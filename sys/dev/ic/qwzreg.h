@@ -8194,6 +8194,10 @@ struct hal_tlv_64_hdr {
 
 #define RX_MPDU_DESC_META_DATA_PEER_ID		0xffff
 
+/* WiFi 7 fields in rx_mpdu_desc.info0. */
+#define RX_MPDU_DESC_INFO0_MPDU_QOS_CTRL_VALID	BIT(27)
+#define RX_MPDU_DESC_INFO0_TID			GENMASK(31, 28)
+
 struct rx_mpdu_desc {
 	uint32_t info0; /* %RX_MPDU_DESC_INFO */
 	uint32_t meta_data;
@@ -9631,6 +9635,9 @@ struct hal_wbm_release_ring {
 	struct hal_tx_rate_stats rate_stats;
 	uint32_t info3;
 } __packed;
+
+#define HAL_WBM_COMPL_TX_INFO1_SW_REL_DETAILS_VALID	BIT(31)
+#define HAL_WBM_COMPL_TX_INFO2_FIRST_MSDU		BIT(8)
 
 #define HAL_WBM_RELEASE_RX_INFO0_CC_STATUS		BIT(16)
 #define HAL_WBM_RELEASE_RX_CC_INFO0_RBM		GENMASK(12, 9)

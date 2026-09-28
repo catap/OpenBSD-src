@@ -295,7 +295,6 @@ struct hal_rx_ops {
 	uint32_t (*rx_desc_get_msdu_freq)(struct hal_rx_desc *desc);
 	uint8_t (*rx_desc_get_msdu_pkt_type)(struct hal_rx_desc *desc);
 	uint8_t (*rx_desc_get_msdu_nss)(struct hal_rx_desc *desc);
-	uint8_t (*rx_desc_get_mpdu_tid)(struct hal_rx_desc *desc);
 	uint16_t (*rx_desc_get_mpdu_peer_id)(struct hal_rx_desc *desc);
 	void (*rx_desc_copy_end_tlv)(struct hal_rx_desc *fdesc,
 				     struct hal_rx_desc *ldesc);
@@ -423,6 +422,7 @@ enum ath12k_dev_flags {
 	ATH12K_FLAG_MULTI_MSI_VECTORS,
 	QWZ_FLAG_ROAMING,
 	QWZ_FLAG_STOPPING,
+	QWZ_FLAG_RECONFIGURE,
 };
 
 enum ath12k_scan_state {
@@ -1650,6 +1650,7 @@ struct hal_rx_wbm_rel_info {
 	int last_msdu;
 	int continuation;
 	uint16_t peer_id;
+	uint8_t tid;
 };
 
 #define HAL_INVALID_PEERID 0xffff
@@ -2094,6 +2095,7 @@ struct qwz_softc {
 	int				peer_mapped;
 	int				peer_delete_done;
 	int				vdev_setup_done;
+	uint32_t			vdev_setup_status;
 	int				peer_assoc_done;
 
 	struct qwz_dbring_cap	*db_caps;

@@ -463,6 +463,7 @@ qwz_stop(struct ifnet *ifp)
 
 	rw_assert_wrlock(&sc->ioctl_rwl);
 	set_bit(QWZ_FLAG_STOPPING, sc->sc_flags);
+	clear_bit(QWZ_FLAG_RECONFIGURE, sc->sc_flags);
 	qwz_del_task(sc, sc->sc_nswq, &sc->newstate_task);
 	qwz_del_task(sc, sc->sc_nswq, &sc->updatechan_task);
 	taskq_barrier(sc->sc_nswq);
@@ -579,8 +580,10 @@ qwz_ioctl(struct ifnet *ifp, u_long cmd, caddr_t data)
 		}
 	}
 
-	splx(s);
 	rw_exit(&sc->ioctl_rwl);
+	if (test_bit(QWZ_FLAG_RECONFIGURE, sc->sc_flags))
+		task_add(systq, &sc->init_task);
+	splx(s);
 
 	return err;
 }
@@ -1523,13 +1526,6 @@ qwz_hw_wcn7850_rx_desc_get_msdu_nss(struct hal_rx_desc *desc)
 	    le32toh(desc->u.wcn7850.msdu_end.info12));
 }
 
-uint8_t
-qwz_hw_wcn7850_rx_desc_get_mpdu_tid(struct hal_rx_desc *desc)
-{
-	return FIELD_GET(RX_MPDU_START_INFO2_TID,
-	    le32toh(desc->u.wcn7850.mpdu_start.info2));
-}
-
 uint16_t
 qwz_hw_wcn7850_rx_desc_get_mpdu_peer_id(struct hal_rx_desc *desc)
 {
@@ -2022,7 +2018,6 @@ const struct hal_rx_ops hal_rx_wcn7850_ops = {
 	.rx_desc_get_msdu_freq = qwz_hw_wcn7850_rx_desc_get_msdu_freq,
 	.rx_desc_get_msdu_pkt_type = qwz_hw_wcn7850_rx_desc_get_msdu_pkt_type,
 	.rx_desc_get_msdu_nss = qwz_hw_wcn7850_rx_desc_get_msdu_nss,
-	.rx_desc_get_mpdu_tid = qwz_hw_wcn7850_rx_desc_get_mpdu_tid,
 	.rx_desc_get_mpdu_peer_id = qwz_hw_wcn7850_rx_desc_get_mpdu_peer_id,
 	.rx_desc_copy_end_tlv = qwz_hw_wcn7850_rx_desc_copy_end_tlv,
 	.rx_desc_get_mpdu_start_tag = qwz_hw_wcn7850_rx_desc_get_mpdu_start_tag,
@@ -10769,6 +10764,7 @@ qwz_vdev_start_resp_event(struct qwz_softc *sc, struct mbuf *m)
 	}
 
 	status = vdev_start_resp.status;
+	sc->vdev_setup_status = status;
 	if (status) {
 		printf("%s: vdev start resp error status %d (%s)\n",
 		    sc->sc_dev.dv_xname, status,
@@ -10823,6 +10819,7 @@ qwz_vdev_stopped_event(struct qwz_softc *sc, struct mbuf *m)
 		return;
 	}
 
+	sc->vdev_setup_status = WMI_VDEV_START_RESPONSE_STATUS_SUCCESS;
 	sc->vdev_setup_done = 1;
 	wakeup(&sc->vdev_setup_done);
 
@@ -11323,6 +11320,13 @@ qwz_init_channels(struct qwz_softc *sc, struct cur_regulatory_info *reg_info)
 		}
 	}
 
+	for (i = 0; i <= IEEE80211_CHAN_MAX; i++) {
+		chan = &ic->ic_channels[i];
+		if (IEEE80211_IS_CHAN_5GHZ(chan))
+			chan->ic_xflags &= ~(IEEE80211_CHANX_80MHZ |
+			    IEEE80211_CHANX_160MHZ);
+	}
+
 	for (i = 0; i < reg_info->num_5ghz_reg_rules; i++) {
 		rule = &reg_info->reg_rules_5ghz_ptr[i];
 		if (rule->start_freq < 5170 ||
@@ -11351,7 +11355,13 @@ qwz_init_channels(struct qwz_softc *sc, struct cur_regulatory_info *reg_info)
 			} else {
 				chan->ic_freq = freq;
 				chan->ic_flags = IEEE80211_CHAN_A |
-				    IEEE80211_CHAN_HT;
+				    IEEE80211_CHAN_HT | IEEE80211_CHAN_VHT;
+				if ((rule->flags & REGULATORY_CHAN_NO_80MHZ) == 0 &&
+				    MIN(rule->max_bw, reg_info->max_bw_5ghz) >= 80)
+					chan->ic_xflags |= IEEE80211_CHANX_80MHZ;
+				if ((rule->flags & REGULATORY_CHAN_NO_160MHZ) == 0 &&
+				    MIN(rule->max_bw, reg_info->max_bw_5ghz) >= 160)
+					chan->ic_xflags |= IEEE80211_CHANX_160MHZ;
 				if ((rule->flags & REGULATORY_CHAN_NO_HT40) == 0)
 					chan->ic_flags |=
 					    IEEE80211_CHAN_40MHZ;
@@ -14535,6 +14545,7 @@ void
 qwz_dp_tx_status_parse(struct qwz_softc *sc, struct hal_wbm_release_ring *desc,
     struct hal_tx_status *ts)
 {
+	memset(ts, 0, sizeof(*ts));
 	ts->buf_rel_source = FIELD_GET(HAL_WBM_RELEASE_INFO0_REL_SRC_MODULE,
 	    desc->info0);
 	if (ts->buf_rel_source != HAL_WBM_REL_SRC_MODULE_FW &&
@@ -14552,14 +14563,13 @@ qwz_dp_tx_status_parse(struct qwz_softc *sc, struct hal_wbm_release_ring *desc,
 	    desc->info1);
 	ts->ack_rssi = FIELD_GET(HAL_WBM_RELEASE_INFO2_ACK_FRAME_RSSI,
 	    desc->info2);
-	if (desc->info2 & HAL_WBM_RELEASE_INFO2_FIRST_MSDU)
-	    ts->flags |= HAL_TX_STATUS_FLAGS_FIRST_MSDU;
+	if ((desc->info1 & HAL_WBM_COMPL_TX_INFO1_SW_REL_DETAILS_VALID) &&
+	    (desc->info2 & HAL_WBM_COMPL_TX_INFO2_FIRST_MSDU))
+		ts->flags |= HAL_TX_STATUS_FLAGS_FIRST_MSDU;
 	ts->peer_id = FIELD_GET(HAL_WBM_RELEASE_INFO3_PEER_ID, desc->info3);
 	ts->tid = FIELD_GET(HAL_WBM_RELEASE_INFO3_TID, desc->info3);
 	if (desc->rate_stats.info0 & HAL_TX_RATE_STATS_INFO0_VALID)
 		ts->rate_stats = desc->rate_stats.info0;
-	else
-		ts->rate_stats = 0;
 }
 
 void
@@ -14744,15 +14754,21 @@ qwz_dp_tx_complete_msdu(struct qwz_softc *sc, struct dp_tx_ring *tx_ring,
 	if (tx_data->ni == NULL)
 		return;
 
-	pkt_type = FIELD_GET(HAL_TX_RATE_STATS_INFO0_PKT_TYPE, ts->rate_stats);
-	mcs = FIELD_GET(HAL_TX_RATE_STATS_INFO0_MCS, ts->rate_stats);
-	if (pkt_type == HAL_TX_RATE_STATS_PKT_TYPE_11A ||
-	    pkt_type == HAL_TX_RATE_STATS_PKT_TYPE_11B) {
-		if (qwz_mac_hw_ratecode_to_legacy_rate(tx_data->ni, mcs, pkt_type,
-		    &rateidx, &rate) == 0)
-			tx_data->ni->ni_txrate = rateidx;
-	} else if (pkt_type == HAL_TX_RATE_STATS_PKT_TYPE_11N)
-		tx_data->ni->ni_txmcs = mcs;
+	if (ts->rate_stats & HAL_TX_RATE_STATS_INFO0_VALID) {
+		pkt_type = FIELD_GET(HAL_TX_RATE_STATS_INFO0_PKT_TYPE,
+		    ts->rate_stats);
+		mcs = FIELD_GET(HAL_TX_RATE_STATS_INFO0_MCS, ts->rate_stats);
+		if (pkt_type == HAL_TX_RATE_STATS_PKT_TYPE_11A ||
+		    pkt_type == HAL_TX_RATE_STATS_PKT_TYPE_11B) {
+			if (qwz_mac_hw_ratecode_to_legacy_rate(tx_data->ni, mcs,
+			    pkt_type, &rateidx, &rate) == 0)
+				tx_data->ni->ni_txrate = rateidx;
+		} else if (pkt_type == HAL_TX_RATE_STATS_PKT_TYPE_11N)
+			tx_data->ni->ni_txmcs = mcs;
+		else if (pkt_type == HAL_TX_RATE_STATS_PKT_TYPE_11AC &&
+		    mcs < IEEE80211_VHT_NUM_MCS)
+			tx_data->ni->ni_txmcs = mcs;
+	}
 
 	if (ts->status == HAL_WBM_TQM_REL_REASON_FRAME_ACKED &&
 	    ts->ack_rssi != 0) {
@@ -15105,6 +15121,16 @@ qwz_dp_process_rx_err(struct qwz_softc *sc)
 	return num_buffs_reaped;
 }
 
+uint8_t
+qwz_hal_rx_mpdu_tid(const struct rx_mpdu_desc *mpdu)
+{
+	uint32_t info = le32toh(mpdu->info0);
+
+	if ((info & RX_MPDU_DESC_INFO0_MPDU_QOS_CTRL_VALID) == 0)
+		return HAL_DESC_REO_NON_QOS_TID;
+	return FIELD_GET(RX_MPDU_DESC_INFO0_TID, info);
+}
+
 int
 qwz_hal_wbm_desc_parse_err(struct qwz_softc *sc, void *desc,
     struct hal_rx_wbm_rel_info *rel_info)
@@ -15162,6 +15188,7 @@ qwz_hal_wbm_desc_parse_err(struct qwz_softc *sc, void *desc,
 	    RX_MSDU_DESC_INFO0_MSDU_CONTINUATION);
 	rel_info->peer_id = FIELD_GET(RX_MPDU_DESC_META_DATA_PEER_ID,
 	    le32toh(wbm_desc->rx_mpdu_info.meta_data));
+	rel_info->tid = qwz_hal_rx_mpdu_tid(&wbm_desc->rx_mpdu_info);
 	return 0;
 }
 
@@ -15296,7 +15323,7 @@ qwz_dp_rx_process_wbm_err(struct qwz_softc *sc)
 		msdu->peer_id = err_info.peer_id;
 		msdu->seq_no = sc->hal_rx_ops->rx_desc_get_mpdu_start_seq_no(
 		    msdu->rx_desc);
-		msdu->tid = sc->hal_rx_ops->rx_desc_get_mpdu_tid(msdu->rx_desc);
+		msdu->tid = err_info.tid;
 		TAILQ_INSERT_TAIL(&msdu_list, msdu, entry);
 	}
 
@@ -15409,7 +15436,6 @@ int
 qwz_dp_rx_h_undecap_nwifi(struct qwz_softc *sc, struct qwz_rx_msdu *msdu,
     uint8_t *first_hdr, enum hal_encrypt_type enctype)
 {
-	struct rx_mpdu_start_qcn9274 *mpdu;
 	struct ieee80211_frame *wh;
 	struct mbuf *m = msdu->m;
 	uint8_t decap_hdr[IEEE80211_MAX_FRAME_HDR_LEN];
@@ -15426,9 +15452,17 @@ qwz_dp_rx_h_undecap_nwifi(struct qwz_softc *sc, struct qwz_rx_msdu *msdu,
 	}
 	msdu->m = m;
 
-	mpdu = &msdu->rx_desc->u.wcn7850.mpdu_start;
 	wh = mtod(m, struct ieee80211_frame *);
-	if ((le32toh(mpdu->info6) & RX_MPDU_START_INFO6_NON_QOS) ||
+	if ((wh->i_fc[0] & IEEE80211_FC0_VERSION_MASK) !=
+	    IEEE80211_FC0_VERSION_0 ||
+	    (wh->i_fc[0] & IEEE80211_FC0_TYPE_MASK) != IEEE80211_FC0_TYPE_DATA)
+		return EINVAL;
+	if (!IEEE80211_IS_MULTICAST(wh->i_addr1) &&
+	    !IEEE80211_ADDR_EQ(wh->i_addr1, sc->sc_ic.ic_myaddr))
+		return EIO;
+	memcpy(&msdu->seq_no, wh->i_seq, sizeof(msdu->seq_no));
+	msdu->seq_no = le16toh(msdu->seq_no) >> IEEE80211_SEQ_SEQ_SHIFT;
+	if (msdu->tid == HAL_DESC_REO_NON_QOS_TID ||
 	    ieee80211_has_qos(wh))
 		return 0;
 
@@ -15452,8 +15486,7 @@ qwz_dp_rx_h_undecap_nwifi(struct qwz_softc *sc, struct qwz_rx_msdu *msdu,
 	wh = (struct ieee80211_frame *)decap_hdr;
 	wh->i_fc[0] |= IEEE80211_FC0_SUBTYPE_QOS;
 	wh->i_fc[1] &= ~IEEE80211_FC1_ORDER;
-	qos_ctl = htole16(sc->hal_rx_ops->rx_desc_get_mpdu_tid(msdu->rx_desc) &
-	    IEEE80211_QOS_TID);
+	qos_ctl = htole16(msdu->tid & IEEE80211_QOS_TID);
 
 	m_adj(m, hdrlen);
 
@@ -15692,7 +15725,11 @@ qwz_dp_rx_h_mpdu(struct qwz_softc *sc, struct qwz_rx_msdu *msdu,
 			enctype = peer->sec_type_grp;
 		else
 			enctype = peer->sec_type;
-	} else
+	} else if (!msdu->is_first_msdu &&
+	    qwz_dp_rx_h_msdu_start_decap_type(sc, rx_desc) ==
+	    DP_RX_DECAP_TYPE_NATIVE_WIFI)
+		return EIO;
+	else
 		enctype = qwz_dp_rx_h_enctype(sc, rx_desc);
 
 	err_bitmap = qwz_dp_rx_h_h_mpdu_err(sc, rx_desc);
@@ -15758,7 +15795,7 @@ qwz_dp_rx_process_msdu(struct qwz_softc *sc, struct qwz_rx_msdu *msdu,
 {
 	struct hal_rx_desc *rx_desc, *lrx_desc;
 	struct qwz_rx_msdu *last_buf;
-	uint8_t l3_pad_bytes;
+	uint8_t l3_pad_bytes, decap;
 	uint16_t msdu_len;
 	int ret;
 	uint32_t hal_rx_desc_sz = sc->hal.hal_desc_sz;
@@ -15779,22 +15816,25 @@ qwz_dp_rx_process_msdu(struct qwz_softc *sc, struct qwz_rx_msdu *msdu,
 		return EIO;
 	}
 
-	/* Drop non-802.11 frames (e.g. WCN7850 FW internal messages). */
-	if (!sc->hal_rx_ops->rx_desc_get_mpdu_fc_valid(rx_desc))
-		return EIO;
+	decap = qwz_dp_rx_h_msdu_start_decap_type(sc, rx_desc);
+	if (decap != DP_RX_DECAP_TYPE_NATIVE_WIFI) {
+		/* Drop non-802.11 frames (e.g. WCN7850 FW internal messages). */
+		if (!sc->hal_rx_ops->rx_desc_get_mpdu_fc_valid(rx_desc))
+			return EIO;
 
-	/*
-	 * WCN7850 FW injects internal messages into the REO ring with
-	 * fc_valid=1 but garbage 802.11 contents; their synthetic addr1
-	 * ends in 84:e1.  Drop those and any unicast frames not addressed
-	 * to our own MAC.
-	 */
-	mpdu = &rx_desc->u.wcn7850.mpdu_start;
-	if (mpdu->addr1[4] == 0x84 && mpdu->addr1[5] == 0xe1)
-		return EIO;
-	if (!(mpdu->addr1[0] & 0x01) &&
-	    !IEEE80211_ADDR_EQ(mpdu->addr1, sc->sc_ic.ic_myaddr))
-		return EIO;
+		/*
+		 * WCN7850 FW injects internal messages into the REO ring with
+		 * fc_valid=1 but garbage 802.11 contents; their synthetic addr1
+		 * ends in 84:e1.  Drop those and any unicast frames not addressed
+		 * to our own MAC.
+		 */
+		mpdu = &rx_desc->u.wcn7850.mpdu_start;
+		if (mpdu->addr1[4] == 0x84 && mpdu->addr1[5] == 0xe1)
+			return EIO;
+		if (!(mpdu->addr1[0] & 0x01) &&
+		    !IEEE80211_ADDR_EQ(mpdu->addr1, sc->sc_ic.ic_myaddr))
+			return EIO;
+	}
 
 	msdu->rx_desc = rx_desc;
 	msdu_len = qwz_dp_rx_h_msdu_start_msdu_len(sc, rx_desc);
@@ -16056,7 +16096,7 @@ try_again:
 		msdu->rx_desc = mtod(m, struct hal_rx_desc *);
 		msdu->seq_no = sc->hal_rx_ops->rx_desc_get_mpdu_start_seq_no(
 		    msdu->rx_desc);
-		msdu->tid = sc->hal_rx_ops->rx_desc_get_mpdu_tid(msdu->rx_desc);
+		msdu->tid = qwz_hal_rx_mpdu_tid(&desc->rx_mpdu_info);
 
 		msdu->mac_id = mac_id;
 		TAILQ_INSERT_TAIL(&msdu_list[mac_id], msdu, entry);
@@ -18003,10 +18043,11 @@ qwz_wmi_send_peer_assoc_cmd(struct qwz_softc *sc, uint8_t pdev_id,
 	cmd->peer_bw_rxnss_override |= param->peer_bw_rxnss_override;
 
 	if (param->vht_capable) {
-		mcs->rx_max_rate = param->rx_max_rate;
-		mcs->rx_mcs_set = param->rx_mcs_set;
-		mcs->tx_max_rate = param->tx_max_rate;
-		mcs->tx_mcs_set = param->tx_mcs_set;
+		/* Matches ath12k_wmi_send_peer_assoc_cmd(). */
+		mcs->rx_max_rate = param->tx_max_rate;
+		mcs->rx_mcs_set = param->tx_mcs_set;
+		mcs->tx_max_rate = param->rx_max_rate;
+		mcs->tx_mcs_set = param->rx_mcs_set;
 	}
 
 	/* HE Rates */
@@ -21575,7 +21616,8 @@ qwz_reg_update_chan_list(struct qwz_softc *sc, uint8_t pdev_id)
 	 * in a fixed, user-specified phy mode.
 	 */
 	if (IFM_MODE(ic->ic_media.ifm_cur->ifm_media) != IFM_AUTO) {
-		if (ic->ic_curmode == IEEE80211_MODE_11A)
+		if (ic->ic_curmode == IEEE80211_MODE_11A ||
+		    ic->ic_curmode == IEEE80211_MODE_11AC)
 			scan_2ghz = 0;
 		if (ic->ic_curmode == IEEE80211_MODE_11B ||
 		    ic->ic_curmode == IEEE80211_MODE_11G)
@@ -21691,6 +21733,12 @@ static const struct htt_rx_ring_tlv_filter qwz_mac_mon_status_filter_default = {
 int
 qwz_mac_register(struct qwz_softc *sc)
 {
+	struct ieee80211com *ic = &sc->sc_ic;
+	struct ath12k_pdev_cap *cap = &sc->pdevs[0].cap;
+	uint32_t fw_width, fw_ext_nss;
+	uint8_t nss_ratio;
+	int nss, ntx, nrx;
+
 	/* Initialize channel counters frequency value in hertz */
 	sc->cc_freq_hz = IPQ8074_CC_FREQ_HERTZ;
 
@@ -21698,6 +21746,56 @@ qwz_mac_register(struct qwz_softc *sc)
 
 	if (IEEE80211_ADDR_EQ(etheranyaddr, sc->sc_ic.ic_myaddr))
 		IEEE80211_ADDR_COPY(sc->sc_ic.ic_myaddr, sc->mac_addr);
+
+	ntx = qwz_get_num_chains(cap->tx_chain_mask);
+	nrx = qwz_get_num_chains(cap->rx_chain_mask);
+	ic->ic_vhtcaps = cap->vht_cap &
+	    (IEEE80211_VHTCAP_RX_LDPC |
+	    IEEE80211_VHTCAP_SGI80 | IEEE80211_VHTCAP_SGI160 |
+	    IEEE80211_VHTCAP_TX_STBC | IEEE80211_VHTCAP_RX_STBC_SS_MASK |
+	    IEEE80211_VHTCAP_MAX_AMPDU_LEN_MASK |
+	    IEEE80211_VHTCAP_RX_ANT_PATTERN | IEEE80211_VHTCAP_TX_ANT_PATTERN);
+	fw_width = FIELD_GET(IEEE80211_VHTCAP_CHAN_WIDTH_MASK, cap->vht_cap);
+	fw_ext_nss = FIELD_GET(IEEE80211_VHTCAP_EXT_NSS_BW_MASK, cap->vht_cap);
+	nss_ratio = cap->nss_ratio_enabled ? cap->nss_ratio_info :
+	    WMI_NSS_RATIO_1_NSS;
+	if (fw_width == IEEE80211_VHTCAP_CHAN_WIDTH_160 ||
+	    fw_width == IEEE80211_VHTCAP_CHAN_WIDTH_160_8080 ||
+	    (cap->nss_ratio_enabled && fw_ext_nss != 0)) {
+		switch (nss_ratio) {
+		case WMI_NSS_RATIO_1BY2_NSS:
+			if (ntx >= 2 && nrx >= 2)
+				ic->ic_vhtcaps |=
+				    1U << IEEE80211_VHTCAP_EXT_NSS_BW_SHIFT;
+			break;
+		case WMI_NSS_RATIO_1_NSS:
+			ic->ic_vhtcaps |= IEEE80211_VHTCAP_CHAN_WIDTH_160 <<
+			    IEEE80211_VHTCAP_CHAN_WIDTH_SHIFT;
+			break;
+		}
+	}
+	if ((ic->ic_vhtcaps & (IEEE80211_VHTCAP_CHAN_WIDTH_MASK |
+	    IEEE80211_VHTCAP_EXT_NSS_BW_MASK)) == 0)
+		ic->ic_vhtcaps &= ~IEEE80211_VHTCAP_SGI160;
+	if (ntx < 2)
+		ic->ic_vhtcaps &= ~IEEE80211_VHTCAP_TX_STBC;
+	ic->ic_vht_tx_max_lgi_mbit_s = 0;
+	ic->ic_vht_rx_max_lgi_mbit_s = 0;
+	if (cap->nss_ratio_enabled)
+		ic->ic_vht_tx_max_lgi_mbit_s = IEEE80211_VHT_EXT_NSS_BW_CAPABLE;
+	ic->ic_vht_rxmcs = ic->ic_vht_txmcs = 0xffff;
+	for (nss = 1; nss <= IEEE80211_VHT_NUM_SS; nss++) {
+		if (nss <= ntx) {
+			ic->ic_vht_txmcs &= ~IEEE80211_VHT_MCS_FOR_SS_MASK(nss);
+			ic->ic_vht_txmcs |= IEEE80211_VHT_MCS_0_9 <<
+			    IEEE80211_VHT_MCS_FOR_SS_SHIFT(nss);
+		}
+		if (nss <= nrx) {
+			ic->ic_vht_rxmcs &= ~IEEE80211_VHT_MCS_FOR_SS_MASK(nss);
+			ic->ic_vht_rxmcs |= IEEE80211_VHT_MCS_0_9 <<
+			    IEEE80211_VHT_MCS_FOR_SS_SHIFT(nss);
+		}
+	}
 
 	return 0;
 }
@@ -22006,6 +22104,8 @@ qwz_mac_vdev_setup_sync(struct qwz_softc *sc)
 		}
 	}
 
+	if (sc->vdev_setup_status != WMI_VDEV_START_RESPONSE_STATUS_SUCCESS)
+		return EIO;
 	return 0;
 }
 
@@ -22029,6 +22129,7 @@ qwz_mac_vdev_stop(struct qwz_softc *sc, struct qwz_vif *arvif, int pdev_id)
 	if (!arvif->is_started)
 		return 0;
 
+	sc->vdev_setup_status = WMI_VDEV_START_RESPONSE_STATUS_SUCCESS;
 	sc->vdev_setup_done = 0;
 	ret = qwz_wmi_vdev_stop(sc, arvif->vdev_id, pdev_id);
 	if (ret) {
@@ -22068,6 +22169,7 @@ qwz_mac_vdev_start_restart(struct qwz_softc *sc, struct qwz_vif *arvif,
 	struct ieee80211_channel *chan = ic->ic_bss->ni_chan;
 	struct wmi_vdev_start_req_arg arg = {};
 	uint8_t sco = IEEE80211_HTOP0_SCO_SCN;
+	uint8_t vht_width = ieee80211_node_vht_channel_width(ic->ic_bss);
 	int ret = 0;
 #ifdef notyet
 	lockdep_assert_held(&ar->conf_mutex);
@@ -22083,7 +22185,14 @@ qwz_mac_vdev_start_restart(struct qwz_softc *sc, struct qwz_vif *arvif,
 	arg.channel.band_center_freq1 = chan->ic_freq;
 	arg.channel.band_center_freq2 = chan->ic_freq;
 
-	if (ieee80211_node_supports_ht(ic->ic_bss) &&
+	if (vht_width == IEEE80211_VHTOP0_CHAN_WIDTH_80 ||
+	    vht_width == IEEE80211_VHTOP0_CHAN_WIDTH_160) {
+		arg.channel.mode = vht_width == IEEE80211_VHTOP0_CHAN_WIDTH_160 ?
+		    MODE_11AX_HE160 : MODE_11AX_HE80;
+		arg.channel.band_center_freq1 = ieee80211_ieee2mhz(
+		    ic->ic_bss->ni_vht_chan_center_freq_idx0,
+		    IEEE80211_CHAN_5GHZ);
+	} else if (ieee80211_node_supports_ht(ic->ic_bss) &&
 	    (chan->ic_flags & IEEE80211_CHAN_HT)) {
 		arg.channel.allow_ht = true;
 		if (IEEE80211_CHAN_40MHZ_ALLOWED(chan) &&
@@ -22107,6 +22216,13 @@ qwz_mac_vdev_start_restart(struct qwz_softc *sc, struct qwz_vif *arvif,
 		arg.channel.mode = MODE_11G;
 	else
 		arg.channel.mode = MODE_11B;
+
+	if ((ic->ic_bss->ni_flags & IEEE80211_NODE_VHT) &&
+	    vht_width == IEEE80211_VHTOP0_CHAN_WIDTH_HT) {
+		arg.channel.mode = sco == IEEE80211_HTOP0_SCO_SCN ?
+		    MODE_11AX_HE20 : MODE_11AX_HE40;
+		arg.channel.allow_ht = false;
+	}
 
 	arg.channel.min_power = 0;
 	arg.channel.max_power = 20; /* XXX */
@@ -22151,6 +22267,7 @@ qwz_mac_vdev_start_restart(struct qwz_softc *sc, struct qwz_vif *arvif,
 	    __func__, arg.vdev_id, arg.channel.freq,
 	    qwz_wmi_phymode_str(arg.channel.mode));
 
+	sc->vdev_setup_status = WMI_VDEV_START_RESPONSE_STATUS_SUCCESS;
 	sc->vdev_setup_done = 0;
 	ret = qwz_wmi_vdev_start(sc, &arg, pdev_id, restart);
 	if (ret) {
@@ -24355,7 +24472,8 @@ qwz_scan(struct qwz_softc *sc, int bgscan)
 		arg->scan_flags |= WMI_SCAN_FLAG_PASSIVE;
 
 	if (IFM_MODE(ic->ic_media.ifm_cur->ifm_media) != IFM_AUTO) {
-		if (ic->ic_curmode == IEEE80211_MODE_11A)
+		if (ic->ic_curmode == IEEE80211_MODE_11A ||
+		    ic->ic_curmode == IEEE80211_MODE_11AC)
 			scan_2ghz = 0;
 		if (ic->ic_curmode == IEEE80211_MODE_11B ||
 		    ic->ic_curmode == IEEE80211_MODE_11G)
@@ -24553,6 +24671,7 @@ qwz_bgscan_cancel(struct qwz_softc *sc)
 	    sc->ns_nstate == IEEE80211_S_RUN &&
 	    !test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) &&
 	    !test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) &&
+	    !test_bit(QWZ_FLAG_RECONFIGURE, sc->sc_flags) &&
 	    !test_bit(QWZ_FLAG_ROAMING, sc->sc_flags)) {
 		ic->ic_xflags &= ~IEEE80211_F_TX_MGMT_ONLY;
 		(*ifp->if_start)(ifp);
@@ -24583,6 +24702,7 @@ qwz_bgscan_done_task(void *arg)
 	/* Ensure that we start in expected state. */
 	if (test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags) ||
 	    test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
+	    test_bit(QWZ_FLAG_RECONFIGURE, sc->sc_flags) ||
 	    (ifp->if_flags & IFF_RUNNING) == 0 ||
 	    (ic->ic_flags & IEEE80211_F_BGSCAN) == 0 ||
 	    (ic->ic_xflags & IEEE80211_F_TX_MGMT_ONLY) == 0 ||
@@ -24972,6 +25092,25 @@ qwz_peer_assoc_h_phymode(struct qwz_softc *sc, struct ieee80211_node *ni,
 	uint8_t sco;
 
 	switch (ic->ic_curmode) {
+	case IEEE80211_MODE_11AC:
+		if ((ni->ni_flags & IEEE80211_NODE_VHT) == 0) {
+			phymode = MODE_11A;
+			break;
+		}
+		switch (ieee80211_node_vht_channel_width(ni)) {
+		case IEEE80211_VHTOP0_CHAN_WIDTH_160:
+			phymode = MODE_11AC_VHT160;
+			break;
+		case IEEE80211_VHTOP0_CHAN_WIDTH_80:
+			phymode = MODE_11AC_VHT80;
+			break;
+		default:
+			sco = ieee80211_node_ht_secondary_channel_offset(ni);
+			phymode = sco == IEEE80211_HTOP0_SCO_SCN ?
+			    MODE_11AC_VHT20 : MODE_11AC_VHT40;
+			break;
+		}
+		break;
 	case IEEE80211_MODE_11A:
 		phymode = MODE_11A;
 		break;
@@ -25117,7 +25256,65 @@ qwz_peer_assoc_h_qos(struct ieee80211_node *ni, struct peer_assoc_params *arg)
 	}
 }
 
-void
+int
+qwz_peer_assoc_h_vht(struct qwz_softc *sc, struct ieee80211_node *ni,
+    struct peer_assoc_params *arg)
+{
+	struct ieee80211com *ic = &sc->sc_ic;
+	uint32_t caps, ampdu;
+	uint8_t width;
+	int nss;
+
+	if ((ni->ni_flags & IEEE80211_NODE_VHT) == 0 ||
+	    !ieee80211_node_supports_vht(ni))
+		return 0;
+
+	width = ieee80211_node_vht_channel_width(ni);
+	arg->vht_flag = arg->vht_capable = true;
+	arg->bw_80 = width == IEEE80211_VHTOP0_CHAN_WIDTH_80;
+	arg->bw_160 = width == IEEE80211_VHTOP0_CHAN_WIDTH_160;
+	arg->rx_mcs_set = ni->ni_vht_rxmcs;
+	arg->tx_mcs_set = ni->ni_vht_txmcs;
+	arg->rx_max_rate = ni->ni_vht_rx_max_lgi_mbit_s;
+	arg->tx_max_rate = ni->ni_vht_tx_max_lgi_mbit_s;
+	arg->peer_nss = 0;
+	for (nss = 1; nss <= IEEE80211_VHT_NUM_SS; nss++) {
+		if (nss > sc->num_tx_chains)
+			arg->rx_mcs_set |= IEEE80211_VHT_MCS_FOR_SS_MASK(nss);
+		if (nss > sc->num_rx_chains)
+			arg->tx_mcs_set |= IEEE80211_VHT_MCS_FOR_SS_MASK(nss);
+		if ((arg->rx_mcs_set & IEEE80211_VHT_MCS_FOR_SS_MASK(nss)) !=
+		    IEEE80211_VHT_MCS_FOR_SS_MASK(nss))
+			arg->peer_nss = nss;
+	}
+	if (arg->peer_nss == 0)
+		return EINVAL;
+
+	caps = ni->ni_vhtcaps;
+	caps &= ~(IEEE80211_VHTCAP_SU_BEAMFORMER |
+	    IEEE80211_VHTCAP_SU_BEAMFORMEE |
+	    IEEE80211_VHTCAP_BEAMFORMEE_STS_MASK |
+	    IEEE80211_VHTCAP_NUM_STS_MASK | IEEE80211_VHTCAP_MU_BEAMFORMER |
+	    IEEE80211_VHTCAP_MU_BEAMFORMEE);
+	if ((ni->ni_flags & IEEE80211_NODE_VHT_SGI80) == 0)
+		caps &= ~IEEE80211_VHTCAP_SGI80;
+	if ((ni->ni_flags & IEEE80211_NODE_VHT_SGI160) == 0)
+		caps &= ~IEEE80211_VHTCAP_SGI160;
+	if ((ic->ic_vhtcaps & IEEE80211_VHTCAP_TX_STBC) == 0)
+		caps &= ~IEEE80211_VHTCAP_RX_STBC_SS_MASK;
+	if ((ic->ic_vhtcaps & IEEE80211_VHTCAP_RX_STBC_SS_MASK) == 0)
+		caps &= ~IEEE80211_VHTCAP_TX_STBC;
+	arg->peer_vht_caps = caps;
+	arg->ldpc_flag |= !!(caps & IEEE80211_VHTCAP_RX_LDPC);
+	arg->stbc_flag |= !!(caps & (IEEE80211_VHTCAP_TX_STBC |
+	    IEEE80211_VHTCAP_RX_STBC_SS_MASK));
+	ampdu = FIELD_GET(IEEE80211_VHTCAP_MAX_AMPDU_LEN_MASK, caps);
+	arg->peer_max_mpdu = MAX(arg->peer_max_mpdu,
+	    (1U << (13 + ampdu)) - 1);
+	return 0;
+}
+
+int
 qwz_peer_assoc_prepare(struct qwz_softc *sc, struct qwz_vif *arvif,
     struct ieee80211_node *ni, struct peer_assoc_params *arg, int reassoc)
 {
@@ -25131,7 +25328,6 @@ qwz_peer_assoc_prepare(struct qwz_softc *sc, struct qwz_vif *arvif,
 	qwz_peer_assoc_h_ht(sc, ni, arg);
 	qwz_peer_assoc_h_qos(ni, arg);
 #if 0
-	qwz_peer_assoc_h_vht(sc, arvif, ni, arg);
 	qwz_peer_assoc_h_he(sc, arvif, ni, arg);
 	qwz_peer_assoc_h_he_6ghz(sc, arvif, ni, arg);
 	qwz_peer_assoc_h_smps(ni, arg);
@@ -25140,6 +25336,7 @@ qwz_peer_assoc_prepare(struct qwz_softc *sc, struct qwz_vif *arvif,
 	arsta->peer_nss = arg->peer_nss;
 #endif
 	/* TODO: amsdu_disable req? */
+	return qwz_peer_assoc_h_vht(sc, ni, arg);
 }
 
 void
@@ -25162,6 +25359,13 @@ qwz_updatechan_task(void *arg)
 	    ic->ic_state != IEEE80211_S_RUN ||
 	    sc->ns_nstate != IEEE80211_S_RUN)
 		goto out;
+
+	if (ni->ni_flags & IEEE80211_NODE_VHT) {
+		ic->ic_xflags |= IEEE80211_F_TX_MGMT_ONLY;
+		set_bit(QWZ_FLAG_RECONFIGURE, sc->sc_flags);
+		task_add(systq, &sc->init_task);
+		goto out;
+	}
 
 	qwz_peer_assoc_h_phymode(sc, ni, &peer_arg);
 	qwz_peer_assoc_h_ht(sc, ni, &peer_arg);
@@ -25438,7 +25642,9 @@ qwz_assoc(struct qwz_softc *sc)
 	nq->flags &= ~(QWZ_NODE_FLAG_HAVE_PAIRWISE_KEY |
 	    QWZ_NODE_FLAG_HAVE_GROUP_KEY);
 
-	qwz_peer_assoc_prepare(sc, arvif, ni, &peer_arg, 0);
+	ret = qwz_peer_assoc_prepare(sc, arvif, ni, &peer_arg, 0);
+	if (ret)
+		return ret;
 
 	/*
 	 * Tell the FW the per-vdev HE MU mode before peer_assoc.  Linux
@@ -25494,7 +25700,28 @@ qwz_run(struct qwz_softc *sc)
 	struct peer_assoc_params peer_arg;
 	int ret;
 
-	qwz_peer_assoc_prepare(sc, arvif, ni, &peer_arg, 1);
+	ret = qwz_peer_assoc_prepare(sc, arvif, ni, &peer_arg, 1);
+	if (ret)
+		return ret;
+	if (ni->ni_flags & IEEE80211_NODE_VHT) {
+		ret = qwz_mac_vdev_stop(sc, arvif, pdev_id);
+		if (ret)
+			return ret;
+		if (test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
+		    test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags))
+			return EBUSY;
+		ret = qwz_mac_vdev_start(sc, arvif, pdev_id);
+		if (ret)
+			return ret;
+		if (test_bit(QWZ_FLAG_STOPPING, sc->sc_flags) ||
+		    test_bit(ATH12K_FLAG_CRASH_FLUSH, sc->sc_flags))
+			return EBUSY;
+		qwz_recalculate_mgmt_rate(sc, ni, arvif->vdev_id, pdev_id);
+		ret = qwz_wmi_vdev_set_param_cmd(sc, arvif->vdev_id, pdev_id,
+		    WMI_VDEV_PARAM_SET_HEMU_MODE, 0);
+		if (ret)
+			return ret;
+	}
 
 	peer_arg.is_assoc = 1;
 
@@ -25554,7 +25781,11 @@ qwz_run(struct qwz_softc *sc)
 	}
 
 	arvif->is_up = 1;
-	if (peer_arg.bw_40)
+	if (peer_arg.bw_160)
+		nq->chwidth = WMI_PEER_CHWIDTH_160MHZ;
+	else if (peer_arg.bw_80)
+		nq->chwidth = WMI_PEER_CHWIDTH_80MHZ;
+	else if (peer_arg.bw_40)
 		nq->chwidth = WMI_PEER_CHWIDTH_40MHZ;
 	else
 		nq->chwidth = WMI_PEER_CHWIDTH_20MHZ;
