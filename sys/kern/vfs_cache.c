@@ -71,6 +71,7 @@ int doingcache = 1;			/* 1 => enable the cache */
 struct pool nch_pool;
 
 void cache_zap(struct namecache *);
+int cache_vget(struct vnode *);
 u_long nextvnodeid;
 
 static inline int
@@ -89,6 +90,22 @@ void
 cache_tree_init(struct namecache_rb_cache *tree)
 {
 	RBT_INIT(namecache_rb_cache, tree);
+}
+
+/*
+ * Reference a vnode found in the cache without sleeping, then lock it.
+ * The only sleep is in vn_lock(), with the reference held.
+ */
+int
+cache_vget(struct vnode *vp)
+{
+	int error;
+
+	if ((error = vget(vp, LK_NOWAIT)) != 0)
+		return (error);
+	if ((error = vn_lock(vp, LK_EXCLUSIVE)) != 0)
+		vrele(vp);
+	return (error);
 }
 
 /*
@@ -208,7 +225,7 @@ cache_lookup(struct vnode *dvp, struct vnode **vpp,
 	} else if (cnp->cn_flags & ISDOTDOT) {
 		VOP_UNLOCK(dvp);
 		cnp->cn_flags |= PDIRUNLOCK;
-		error = vget(vp, LK_EXCLUSIVE);
+		error = cache_vget(vp);
 		/*
 		 * If the above vget() succeeded and both LOCKPARENT and
 		 * ISLASTCN is set, lock the directory vnode as well.
@@ -221,7 +238,7 @@ cache_lookup(struct vnode *dvp, struct vnode **vpp,
 			cnp->cn_flags &= ~PDIRUNLOCK;
 		}
 	} else {
-		error = vget(vp, LK_EXCLUSIVE);
+		error = cache_vget(vp);
 		/*
 		 * If the above vget() failed or either of LOCKPARENT or
 		 * ISLASTCN is set, unlock the directory vnode.
@@ -240,8 +257,24 @@ cache_lookup(struct vnode *dvp, struct vnode **vpp,
 		if (!error) {
 			vput(vp);
 			nchstats.ncs_falsehits++;
+			/*
+			 * XXX Without sleeping, and assuming we are kernel
+			 * locked the above case should no longer be able to
+			 * happen. In other words, if our assumptions are
+			 * correct we should never see this falsehits case fire.
+			 */
+			panic("vpid %lu != vp->v_id %u for vp %p", vpid,
+			    vp->v_id, vp);
 		} else
 			nchstats.ncs_badhits++;
+		/*
+		 * EBUSY means the vnode could not be referenced because it is
+		 * being cleaned out; nothing has slept since the entry was
+		 * found, so it can be removed here rather than left for the
+		 * clean to purge.
+		 */
+		if (error == EBUSY)
+			cache_zap(ncp);
 		/*
 		 * The parent needs to be locked when we return to VOP_LOOKUP().
 		 * The `.' case here should be extremely rare (if it can happen
@@ -372,21 +405,16 @@ cache_enter(struct vnode *dvp, struct vnode *vp, struct componentname *cnp)
 	ncp->nc_dvpid = dvp->v_id;
 	ncp->nc_nlen = cnp->cn_namelen;
 	memcpy(ncp->nc_name, cnp->cn_nameptr, ncp->nc_nlen);
+
+	/* The lookup that produced vp is authoritative; drop any old entry. */
+	if ((lncp = RBT_FIND(namecache_rb_cache, &dvp->v_nc_tree, ncp)) != NULL)
+		cache_zap(lncp);
+
 	if (RBT_EMPTY(namecache_rb_cache, &dvp->v_nc_tree)) {
 		vhold(dvp);
 	}
-	if ((lncp = RBT_INSERT(namecache_rb_cache, &dvp->v_nc_tree, ncp))
-	    != NULL) {
-		/* someone has raced us and added a different entry
-		 * for the same vnode (different ncp) - we don't need
-		 * this entry, so free it and we are done.
-		 */
-		pool_put(&nch_pool, ncp);
-		/* we know now dvp->v_nc_tree is not empty, no need
-		 * to vdrop here
-		 */
-		goto done;
-	}
+	lncp = RBT_INSERT(namecache_rb_cache, &dvp->v_nc_tree, ncp);
+	KASSERT(lncp == NULL);
 	if (vp) {
 		TAILQ_INSERT_TAIL(&nclruhead, ncp, nc_lru);
 		numcache++;
@@ -408,8 +436,6 @@ cache_enter(struct vnode *dvp, struct vnode *vp, struct componentname *cnp)
 		    != NULL)
 			cache_zap(ncp);
 	}
-done:
-	return;
 }
 
 
