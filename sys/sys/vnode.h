@@ -97,6 +97,9 @@ struct vnode {
 	const struct vops *v_op;	/* vnode operations vector */
 	enum	vtype v_type;		/* vnode type */
 	enum	vtagtype v_tag;		/* type of underlying data */
+#ifdef VNODE_LEAKDIAG
+	void	*v_allocaddr;		/* getnewvnode caller */
+#endif
 	u_int	v_flag;			/* vnode flags (see below) */
 	u_int	v_lflag;		/* [V] lock vnode flags */
 	u_int   v_usecount;		/* reference count of users */
@@ -108,7 +111,6 @@ struct vnode {
 	u_int   v_holdcnt;		/* [B] buffer references */
 	u_int   v_id;				/* capability identifier */
 	struct	mount *v_mount;			/* ptr to vfs we are in */
-	TAILQ_ENTRY(vnode) v_freelist;	/* [B] vnode freelist */
 	TAILQ_ENTRY(vnode) v_mntvnodes;		/* vnodes for mount point */
 	struct	buf_rb_bufs v_bufs_tree;/* [B] lookup of all bufs */
 	struct	buflists v_cleanblkhd;	/* [B] clean blocklist head */
@@ -147,6 +149,7 @@ struct vnode {
 #define	VCLONED		0x0400	/* vnode was cloned */
 #define	VALIASED	0x0800	/* vnode has an alias */
 #define	VLARVAL		0x1000	/* vnode data not yet set up by higher level */
+#define	VINACTIVE	0x2000	/* vnode is in inactive */
 #define	VLOCKSWORK	0x4000	/* FS supports locking discipline */
 #define	VCLONE		0x8000	/* vnode is a clone */
 
@@ -155,7 +158,6 @@ struct vnode {
  */
 #define	VBIOWAIT	0x0001	/* waiting for output to complete */
 #define VBIOONSYNCLIST	0x0002	/* Vnode is on syncer worklist */
-#define VBIOONFREELIST  0x0004  /* Vnode is on a free list */
 #define VBIOERROR	0x0008  /* A write failed */
 
 /*
@@ -598,7 +600,7 @@ int	vwaitforio(struct vnode *, int, char *, uint64_t);
 void	vwakeup(struct vnode *);
 void	vput(struct vnode *);
 int	vrecycle(struct vnode *, struct proc *);
-int	vrele(struct vnode *);
+void	vrele(struct vnode *);
 void	vref(struct vnode *);
 void	vprint(char *, struct vnode *);
 void	copy_statfs_info(struct statfs *, const struct mount *);
