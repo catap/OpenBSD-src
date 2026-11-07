@@ -238,7 +238,7 @@ unveil_copy(struct process *parent, struct process *child)
 ssize_t
 unveil_find_cover(struct vnode *dp, struct proc *p)
 {
-	struct vnode *vp = NULL, *parent = NULL, *root;
+	struct vnode *vp = NULL, *parent = NULL, *root, *held = NULL;
 	ssize_t ret = -1;
 	int error;
 
@@ -265,13 +265,13 @@ unveil_find_cover(struct vnode *dp, struct proc *p)
 		 */
 		while (vp != root && (vp->v_flag & VROOT)) {
 			if (vp->v_mount == NULL)
-				return -1;
+				goto out;
 			vp = vp->v_mount->mnt_vnodecovered ?
 			    vp->v_mount->mnt_vnodecovered : vp;
 		}
 
 		if (vget(vp, LK_EXCLUSIVE|LK_RETRY) != 0)
-			return -1;
+			goto out;
 		/* Get parent vnode of vp using lookup of '..' */
 		/* This returns with vp unlocked but ref'ed*/
 		error = VOP_LOOKUP(vp, &parent, &cn);
@@ -286,23 +286,29 @@ unveil_find_cover(struct vnode *dp, struct proc *p)
 				DPRINTF("vnode %p PDIRUNLOCK on error\n", vp);
 				vrele(vp);
 			}
-			break;
+			goto out;
 		}
 
 		vrele(vp);
 		(void) unveil_lookup(parent, p->p_p, &ret);
-		vput(parent);
 
-		if (ret >= 0)
-			break;
-
-		if (vp == parent) {
-			ret = -1;
+		if (ret >= 0 || vp == parent) {
+			if (vp == parent)
+				ret = -1;
+			vput(parent);
 			break;
 		}
+
+		VOP_UNLOCK(parent);
+		if (held != NULL)
+			vrele(held);
 		vp = parent;
+		held = vp;
 		parent = NULL;
 	}
+out:
+	if (held != NULL)
+		vrele(held);
 	return ret;
 }
 
