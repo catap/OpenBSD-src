@@ -243,8 +243,8 @@ ffs_vinit(struct mount *mntp, struct vnode **vpp)
 #ifdef VFSLCKDEBUG
 			vp->v_flag &= ~VLOCKSWORK;
 #endif
-			vrele(vp);
 			vgone(vp);
+			vrele(vp);
 			/*
 			 * Reinitialize aliased inode.
 			 */
