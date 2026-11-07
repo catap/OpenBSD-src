@@ -177,6 +177,7 @@ struct	namecache {
 	TAILQ_ENTRY(namecache) nc_neg;	/* Negative Entry LRU chain */
 	RBT_ENTRY(namecache) n_rbcache;	/* Namecache rb tree from vnode */
 	TAILQ_ENTRY(namecache) nc_me;	/* ncp's referring to me */
+	TAILQ_ENTRY(namecache) nc_ref;	/* ncp's holding nc_vp */
 	struct	vnode *nc_dvp;		/* vnode of parent of name */
 	u_long	nc_dvpid;		/* capability number of nc_dvp */
 	struct	vnode *nc_vp;		/* vnode the name refers to */

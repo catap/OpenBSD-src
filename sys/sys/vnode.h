@@ -125,6 +125,7 @@ struct vnode {
 	/* VFS namecache */
 	struct namecache_rb_cache v_nc_tree;
 	TAILQ_HEAD(, namecache) v_cache_dst;	 /* cache entries to us */
+	TAILQ_HEAD(, namecache) v_cache_refs;	 /* cache entries holding us */
 
 	void	*v_data;			/* private data for fs */
 	struct	klist v_klist;			/* identity of poller(s) */

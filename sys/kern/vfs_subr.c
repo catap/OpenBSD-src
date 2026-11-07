@@ -423,6 +423,7 @@ getnewvnode(enum vtagtype tag, struct mount *mp, const struct vops *vops,
 		RBT_INIT(buf_rb_bufs, &vp->v_bufs_tree);
 		cache_tree_init(&vp->v_nc_tree);
 		TAILQ_INIT(&vp->v_cache_dst);
+		TAILQ_INIT(&vp->v_cache_refs);
 		numvnodes++;
 	} else {
 		TAILQ_FOREACH(vp, listhd, v_freelist) {
@@ -1110,6 +1111,7 @@ vclean(struct vnode *vp, int flags, struct proc *p)
 	 */
 	if (VOP_RECLAIM(vp, p))
 		panic("vclean: cannot reclaim");
+	cache_purge(vp);
 	if (active) {
 		vp->v_usecount--;
 		if (vp->v_usecount == 0) {
@@ -1120,8 +1122,6 @@ vclean(struct vnode *vp, int flags, struct proc *p)
 			splx(s);
 		}
 	}
-	cache_purge(vp);
-
 	/*
 	 * Done with purge, notify sleepers of the grim news.
 	 */

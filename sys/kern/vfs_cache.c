@@ -120,6 +120,10 @@ cache_zap(struct namecache *ncp)
 			TAILQ_REMOVE(&ncp->nc_vp->v_cache_dst, ncp, nc_me);
 		}
 	}
+	if (ncp->nc_vp) {
+		TAILQ_REMOVE(&ncp->nc_vp->v_cache_refs, ncp, nc_ref);
+		vdrop(ncp->nc_vp);
+	}
 	pool_put(&nch_pool, ncp);
 	if (dvp)
 		vdrop(dvp);
@@ -362,8 +366,11 @@ cache_enter(struct vnode *dvp, struct vnode *vp, struct componentname *cnp)
 
 	/* grab the vnode we just found */
 	ncp->nc_vp = vp;
-	if (vp)
+	if (vp) {
+		vhold(vp);
 		ncp->nc_vpid = vp->v_id;
+		TAILQ_INSERT_TAIL(&vp->v_cache_refs, ncp, nc_ref);
+	}
 
 	/* fill in cache info */
 	ncp->nc_dvp = dvp;
@@ -379,6 +386,10 @@ cache_enter(struct vnode *dvp, struct vnode *vp, struct componentname *cnp)
 		 * for the same vnode (different ncp) - we don't need
 		 * this entry, so free it and we are done.
 		 */
+		if (vp) {
+			TAILQ_REMOVE(&vp->v_cache_refs, ncp, nc_ref);
+			vdrop(vp);
+		}
 		pool_put(&nch_pool, ncp);
 		/* we know now dvp->v_nc_tree is not empty, no need
 		 * to vdrop here
@@ -436,6 +447,8 @@ cache_purge(struct vnode *vp)
 	KASSERT(vp->v_type == VDIR || TAILQ_EMPTY(&vp->v_cache_dst));
 
 	while ((ncp = TAILQ_FIRST(&vp->v_cache_dst)))
+		cache_zap(ncp);
+	while ((ncp = TAILQ_FIRST(&vp->v_cache_refs)))
 		cache_zap(ncp);
 	while ((ncp = RBT_ROOT(namecache_rb_cache, &vp->v_nc_tree)))
 		cache_zap(ncp);
