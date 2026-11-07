@@ -211,7 +211,7 @@ vfs_getcwd_getcache(struct vnode **lvpp, struct vnode **uvpp, char **bpp,
 {
 	struct vnode *lvp, *uvp = NULL;
 	char *obp;
-	int error, vpid;
+	int error;
 
 	lvp = *lvpp;
 	obp = *bpp;	/* Save original position to restore to on error */
@@ -228,28 +228,16 @@ vfs_getcwd_getcache(struct vnode **lvpp, struct vnode **uvpp, char **bpp,
 	}
 
 	uvp = *uvpp;
-	vpid = uvp->v_id;
-
 
 	/* Release current lock before acquiring the parent lock */
 	VOP_UNLOCK(lvp);
 
-	error = vget(uvp, LK_EXCLUSIVE | LK_RETRY);
-	if (error)
-		*uvpp = NULL;
-
-	/*
-	 * Verify that vget() succeeded, and check that vnode capability
-	 * didn't change while we were waiting for the lock.
-	 */
-	if (error || (vpid != uvp->v_id)) {
+	error = vget(uvp, LK_EXCLUSIVE | LK_NOWAIT);
+	if (error) {
 		/*
 		 * Try to get our lock back. If that works, tell the caller to
 		 * try things the hard way, otherwise give up.
 		 */
-		if (!error)
-			vput(uvp);
-
 		*uvpp = NULL;
 
 		error = vn_lock(lvp, LK_EXCLUSIVE | LK_RETRY);
