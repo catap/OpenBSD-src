@@ -128,16 +128,9 @@ cache_zap(struct namecache *ncp)
 		if (RBT_EMPTY(namecache_rb_cache, &ncp->nc_dvp->v_nc_tree))
 			dvp = ncp->nc_dvp;
 	}
-	if (ncp->nc_vp && (ncp->nc_vpid == ncp->nc_vp->v_id)) {
-		if (ncp->nc_vp != ncp->nc_dvp &&
-		    ncp->nc_vp->v_type == VDIR &&
-		    (ncp->nc_nlen > 2 ||
-			(ncp->nc_nlen > 1 &&
-			    ncp->nc_name[1] != '.') ||
-			(ncp->nc_nlen > 0 &&
-			    ncp->nc_name[0] != '.'))) {
-			TAILQ_REMOVE(&ncp->nc_vp->v_cache_dst, ncp, nc_me);
-		}
+	if (ncp->nc_vp != NULL && ncp->nc_vp != ncp->nc_dvp) {
+		KASSERT(ncp->nc_vpid == ncp->nc_vp->v_id);
+		TAILQ_REMOVE(&ncp->nc_vp->v_cache_dst, ncp, nc_me);
 	}
 	pool_put(&nch_pool, ncp);
 	if (dvp)
@@ -328,6 +321,10 @@ cache_revlookup(struct vnode *vp, struct vnode **dvpp, char **bpp, char *bufp)
 	if (!doingcache)
 		goto out;
 	TAILQ_FOREACH(ncp, &vp->v_cache_dst, nc_me) {
+		/* ".." names vp but does not lead to it from its parent. */
+		if (ncp->nc_nlen == 2 && ncp->nc_name[0] == '.' &&
+		    ncp->nc_name[1] == '.')
+			continue;
 		dvp = ncp->nc_dvp;
 		if (dvp && dvp != vp && ncp->nc_dvpid == dvp->v_id)
 			goto found;
@@ -338,10 +335,6 @@ found:
 	if (ncp->nc_nlen == 1 &&
 	    ncp->nc_name[0] == '.')
 		panic("cache_revlookup: found entry for .");
-	if (ncp->nc_nlen == 2 &&
-	    ncp->nc_name[0] == '.' &&
-	    ncp->nc_name[1] == '.')
-		panic("cache_revlookup: found entry for ..");
 #endif
 	nchstats.ncs_revhits++;
 
@@ -418,15 +411,8 @@ cache_enter(struct vnode *dvp, struct vnode *vp, struct componentname *cnp)
 	if (vp) {
 		TAILQ_INSERT_TAIL(&nclruhead, ncp, nc_lru);
 		numcache++;
-		/* don't put . or .. in the reverse map */
-		if (vp != dvp && vp->v_type == VDIR &&
-		    (ncp->nc_nlen > 2 ||
-			(ncp->nc_nlen > 1 &&
-			    ncp->nc_name[1] != '.') ||
-			(ncp->nc_nlen > 0 &&
-			    ncp->nc_name[0] != '.')))
-			TAILQ_INSERT_TAIL(&vp->v_cache_dst, ncp,
-			    nc_me);
+		if (vp != dvp)
+			TAILQ_INSERT_TAIL(&vp->v_cache_dst, ncp, nc_me);
 	} else {
 		TAILQ_INSERT_TAIL(&nclruneghead, ncp, nc_neg);
 		numneg++;
@@ -457,9 +443,6 @@ void
 cache_purge(struct vnode *vp)
 {
 	struct namecache *ncp;
-
-	/* We should never have destinations cached for a non-VDIR vnode. */
-	KASSERT(vp->v_type == VDIR || TAILQ_EMPTY(&vp->v_cache_dst));
 
 	while ((ncp = TAILQ_FIRST(&vp->v_cache_dst)))
 		cache_zap(ncp);
