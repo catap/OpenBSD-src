@@ -128,10 +128,8 @@ cache_zap(struct namecache *ncp)
 		if (RBT_EMPTY(namecache_rb_cache, &ncp->nc_dvp->v_nc_tree))
 			dvp = ncp->nc_dvp;
 	}
-	if (ncp->nc_vp != NULL && ncp->nc_vp != ncp->nc_dvp) {
-		KASSERT(ncp->nc_vpid == ncp->nc_vp->v_id);
+	if (ncp->nc_vp != NULL && ncp->nc_vp != ncp->nc_dvp)
 		TAILQ_REMOVE(&ncp->nc_vp->v_cache_dst, ncp, nc_me);
-	}
 	pool_put(&nch_pool, ncp);
 	if (dvp)
 		vdrop(dvp);
@@ -153,7 +151,6 @@ cache_lookup(struct vnode *dvp, struct vnode **vpp,
 	struct namecache *ncp;
 	struct namecache n;
 	struct vnode *vp;
-	u_long vpid;
 	int error;
 
 	*vpp = NULL;
@@ -197,9 +194,6 @@ cache_lookup(struct vnode *dvp, struct vnode **vpp,
 			nchstats.ncs_badhits++;
 			goto remove;
 		}
-	} else if (ncp->nc_vpid != ncp->nc_vp->v_id) {
-		nchstats.ncs_falsehits++;
-		goto remove;
 	}
 
 	/*
@@ -211,7 +205,6 @@ cache_lookup(struct vnode *dvp, struct vnode **vpp,
 	}
 
 	vp = ncp->nc_vp;
-	vpid = vp->v_id;
 	if (vp == dvp) {	/* lookup on "." */
 		vref(dvp);
 		error = 0;
@@ -242,24 +235,8 @@ cache_lookup(struct vnode *dvp, struct vnode **vpp,
 		}
 	}
 
-	/*
-	 * Check that the lock succeeded, and that the capability number did
-	 * not change while we were waiting for the lock.
-	 */
-	if (error || vpid != vp->v_id) {
-		if (!error) {
-			vput(vp);
-			nchstats.ncs_falsehits++;
-			/*
-			 * XXX Without sleeping, and assuming we are kernel
-			 * locked the above case should no longer be able to
-			 * happen. In other words, if our assumptions are
-			 * correct we should never see this falsehits case fire.
-			 */
-			panic("vpid %lu != vp->v_id %u for vp %p", vpid,
-			    vp->v_id, vp);
-		} else
-			nchstats.ncs_badhits++;
+	if (error) {
+		nchstats.ncs_badhits++;
 		/*
 		 * EBUSY means the vnode could not be referenced because it is
 		 * being cleaned out; nothing has slept since the entry was
@@ -270,15 +247,10 @@ cache_lookup(struct vnode *dvp, struct vnode **vpp,
 			cache_zap(ncp);
 		/*
 		 * The parent needs to be locked when we return to VOP_LOOKUP().
-		 * The `.' case here should be extremely rare (if it can happen
-		 * at all), so we don't bother optimizing out the unlock/relock.
 		 */
-		if (vp == dvp || error ||
-		    (~cnp->cn_flags & (LOCKPARENT|ISLASTCN)) != 0) {
-			if ((error = vn_lock(dvp, LK_EXCLUSIVE)) != 0)
-				return (error);
-			cnp->cn_flags &= ~PDIRUNLOCK;
-		}
+		if ((error = vn_lock(dvp, LK_EXCLUSIVE)) != 0)
+			return (error);
+		cnp->cn_flags &= ~PDIRUNLOCK;
 		return (-1);
 	}
 
@@ -326,7 +298,7 @@ cache_revlookup(struct vnode *vp, struct vnode **dvpp, char **bpp, char *bufp)
 		    ncp->nc_name[1] == '.')
 			continue;
 		dvp = ncp->nc_dvp;
-		if (dvp && dvp != vp && ncp->nc_dvpid == dvp->v_id)
+		if (dvp && dvp != vp)
 			goto found;
 	}
 	goto miss;
@@ -388,14 +360,8 @@ cache_enter(struct vnode *dvp, struct vnode *vp, struct componentname *cnp)
 	}
 	ncp = pool_get(&nch_pool, PR_WAITOK|PR_ZERO);
 
-	/* grab the vnode we just found */
 	ncp->nc_vp = vp;
-	if (vp)
-		ncp->nc_vpid = vp->v_id;
-
-	/* fill in cache info */
 	ncp->nc_dvp = dvp;
-	ncp->nc_dvpid = dvp->v_id;
 	ncp->nc_nlen = cnp->cn_namelen;
 	memcpy(ncp->nc_name, cnp->cn_nameptr, ncp->nc_nlen);
 
