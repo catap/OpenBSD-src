@@ -182,9 +182,11 @@ ufs_mknod(void *v)
 	 * checked to see if it is an alias of an existing entry in
 	 * the inode cache.
 	 */
+	vref(*vpp);
 	vput(*vpp);
 	(*vpp)->v_type = VNON;
 	vgone(*vpp);
+	vrele(*vpp);
 	*vpp = NULL;
 	return (0);
 }
