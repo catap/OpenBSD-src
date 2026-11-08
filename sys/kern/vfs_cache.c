@@ -72,7 +72,6 @@ struct pool nch_pool;
 
 void cache_zap(struct namecache *);
 int cache_vget(struct vnode *);
-u_long nextvnodeid;
 
 static inline int
 namecache_compare(const struct namecache *n1, const struct namecache *n2)
@@ -410,11 +409,6 @@ cache_purge(struct vnode *vp)
 		cache_zap(ncp);
 	while ((ncp = RBT_ROOT(namecache_rb_cache, &vp->v_nc_tree)))
 		cache_zap(ncp);
-
-	/* XXX this blows goats */
-	vp->v_id = ++nextvnodeid;
-	if (vp->v_id == 0)
-		vp->v_id = ++nextvnodeid;
 }
 
 /*

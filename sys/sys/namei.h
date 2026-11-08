@@ -178,9 +178,7 @@ struct	namecache {
 	RBT_ENTRY(namecache) n_rbcache;	/* Namecache rb tree from vnode */
 	TAILQ_ENTRY(namecache) nc_me;	/* ncp's referring to me */
 	struct	vnode *nc_dvp;		/* vnode of parent of name */
-	u_long	nc_dvpid;		/* unused - to be removed */
 	struct	vnode *nc_vp;		/* vnode the name refers to */
-	u_long	nc_vpid;		/* unused - to be removed */
 	char	nc_nlen;		/* length of name */
 	char	nc_name[NAMECACHE_MAXLEN];	/* segment name */
 };
