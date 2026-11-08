@@ -563,7 +563,6 @@ checkalias(struct vnode *nvp, dev_t nvp_rdev)
 	struct proc *p = curproc;
 	struct vnode *vp;
 	struct vnodechain *vchain;
-	u_int vpid;
 
 	if (nvp->v_type != VBLK && nvp->v_type != VCHR)
 		return;
@@ -581,12 +580,7 @@ loop:
 			vgonel(vp, p);
 			goto loop;
 		}
-		vpid = vp->v_id;
 		if (vget(vp, LK_EXCLUSIVE)) {
-			goto loop;
-		}
-		if (vpid != vp->v_id) {
-			vput(vp);
 			goto loop;
 		}
 		break;

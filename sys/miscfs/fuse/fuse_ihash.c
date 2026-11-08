@@ -91,21 +91,15 @@ fuse_ihashget(const struct fusefs_mnt *fmp, ino_t inum)
 	struct fuse_ihashhead *ipp;
 	struct fusefs_node *ip;
 	struct vnode *vp;
-	u_int vpid;
 loop:
 	/* XXXLOCKING lock hash list */
 	ipp = fuse_ihash(fmp, inum);
 	LIST_FOREACH(ip, ipp, i_hash) {
 		if (inum == ip->i_number && fmp == ip->i_fmp) {
 			vp = ITOV(ip);
-			vpid = vp->v_id;
 			/* XXXLOCKING unlock hash list? */
 			if (vget(vp, LK_EXCLUSIVE))
 				goto loop;
-			if (vpid != vp->v_id) {
-				vput(vp);
-				goto loop;
-			}
 
 			return (vp);
 		}
