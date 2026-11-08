@@ -100,21 +100,15 @@ cd9660_ihashget(dev_t dev, cdino_t inum)
 {
 	struct iso_node *ip;
 	struct vnode *vp;
-	u_int vpid;
 
 loop:
 	/* XXX locking lock hash list? */
 	for (ip = isohashtbl[INOHASH(dev, inum)]; ip; ip = ip->i_next) {
 		if (inum == ip->i_number && dev == ip->i_dev) {
 			vp = ITOV(ip);
-			vpid = vp->v_id;
 			/* XXX locking unlock hash list? */
 			if (vget(vp, LK_EXCLUSIVE))
 				goto loop;
-			if (vpid != vp->v_id) {
-				vput(vp);
-				goto loop;
-			}
 			return (vp);
 		}
 	}
