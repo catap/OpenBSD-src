@@ -271,7 +271,7 @@ remove:
 /*
  * Scan cache looking for name of directory entry pointing at vp.
  *
- * Fill in dvpp.
+ * Fill in dvpp with a referenced, unlocked parent vnode.
  *
  * If bufp is non-NULL, also place the name in the buffer which starts
  * at bufp, immediately before *bpp, and move bpp backwards to point
@@ -279,8 +279,6 @@ remove:
  * this way to cater to the whims of getcwd).
  *
  * Returns 0 on success, -1 on cache miss, positive errno on failure.
- *
- * TODO: should we return *dvpp locked?
  */
 
 int
@@ -308,12 +306,15 @@ found:
 	    ncp->nc_name[0] == '.')
 		panic("cache_revlookup: found entry for .");
 #endif
+	if (vget(dvp, LK_NOWAIT) != 0)
+		goto miss;
 	nchstats.ncs_revhits++;
 
 	if (bufp != NULL) {
 		bp = *bpp;
 		bp -= ncp->nc_nlen;
 		if (bp <= bufp) {
+			vrele(dvp);
 			*dvpp = NULL;
 			return (ERANGE);
 		}
@@ -322,11 +323,6 @@ found:
 	}
 
 	*dvpp = dvp;
-
-	/*
-	 * XXX: Should we vget() here to have more
-	 * consistent semantics with cache_lookup()?
-	 */
 	return (0);
 
 miss:
