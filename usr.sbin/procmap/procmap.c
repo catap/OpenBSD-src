@@ -89,7 +89,6 @@ typedef int boolean_t;
 struct cache_entry {
 	LIST_ENTRY(cache_entry) ce_next;
 	struct vnode *ce_vp, *ce_pvp;
-	u_long ce_cid, ce_pcid;
 	unsigned int ce_nlen;
 	char ce_name[256];
 };
@@ -938,22 +937,20 @@ search_cache(kvm_t *kd, struct kbit *vp, char **name, char *buf, size_t blen)
 	struct cache_entry *ce;
 	struct kbit svp;
 	char *o, *e;
-	u_long cid;
 
 	if (!namecache_loaded)
 		load_name_cache(kd);
 
 	P(&svp) = P(vp);
 	S(&svp) = sizeof(struct vnode);
-	cid = D(vp, vnode)->v_id;
 
 	e = &buf[blen - 1];
 	o = e;
 	do {
 		LIST_FOREACH(ce, &lcache, ce_next)
-			if (ce->ce_vp == P(&svp) && ce->ce_cid == cid)
+			if (ce->ce_vp == P(&svp))
 				break;
-		if (ce && ce->ce_vp == P(&svp) && ce->ce_cid == cid) {
+		if (ce && ce->ce_vp == P(&svp)) {
 			if (o != e) {
 				if (o <= buf)
 					break;
@@ -964,7 +961,6 @@ search_cache(kvm_t *kd, struct kbit *vp, char **name, char *buf, size_t blen)
 			o -= ce->ce_nlen;
 			memcpy(o, ce->ce_name, ce->ce_nlen);
 			P(&svp) = ce->ce_pvp;
-			cid = ce->ce_pcid;
 		} else
 			break;
 	} while (1/*CONSTCOND*/);
@@ -1009,10 +1005,9 @@ cache_enter(struct namecache *ncp)
 
 	if (debug & DUMP_NAMEI_CACHE)
 		printf("ncp->nc_vp %10p, ncp->nc_dvp %10p, ncp->nc_nlen "
-		    "%3d [%.*s] (nc_dvpid=%lu, nc_vpid=%lu)\n",
+		    "%3d [%.*s]\n",
 		    ncp->nc_vp, ncp->nc_dvp,
-		    ncp->nc_nlen, ncp->nc_nlen, ncp->nc_name,
-		    ncp->nc_dvpid, ncp->nc_vpid);
+		    ncp->nc_nlen, ncp->nc_nlen, ncp->nc_name);
 
 	ce = malloc(sizeof(struct cache_entry));
 	if (ce == NULL)
@@ -1020,8 +1015,6 @@ cache_enter(struct namecache *ncp)
 
 	ce->ce_vp = ncp->nc_vp;
 	ce->ce_pvp = ncp->nc_dvp;
-	ce->ce_cid = ncp->nc_vpid;
-	ce->ce_pcid = ncp->nc_dvpid;
 	ce->ce_nlen = (unsigned)ncp->nc_nlen;
 	strlcpy(ce->ce_name, ncp->nc_name, sizeof(ce->ce_name));
 
