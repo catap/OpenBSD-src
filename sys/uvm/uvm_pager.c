@@ -778,5 +778,7 @@ uvm_aio_aiodone(struct buf *bp)
 		/* XXX daddr_t -> int */
 		uvm_swap_markbad(slot, npages);
 	}
+	if (bp->b_vp)
+		brelvp(bp);
 	pool_put(&bufpool, bp);
 }

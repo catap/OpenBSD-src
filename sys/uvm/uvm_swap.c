@@ -1745,7 +1745,6 @@ uvm_swap_io(struct vm_page **pps, int startslot, int npages, int flags)
 
 	/*
 	 * for pageouts we must set "dirtyoff" [NFS client code needs it].
-	 * and we bump v_numoutput (counter of number of active outputs).
 	 */
 	if (write) {
 		bp->b_dirtyoff = 0;
@@ -1755,9 +1754,6 @@ uvm_swap_io(struct vm_page **pps, int startslot, int npages, int flags)
 		if (swap_encrypt_initialized)
 			uvm_swap_markdecrypt(sdp, startslot, npages, encrypt);
 #endif
-		s = splbio();
-		swapdev_vp->v_numoutput++;
-		splx(s);
 	}
 
 	/* for async ops we must set up the iodone handler. */
@@ -1806,8 +1802,6 @@ uvm_swap_io(struct vm_page **pps, int startslot, int npages, int flags)
 	if (bp->b_vp)
 		brelvp(bp);
 
-	if (write && bp->b_vp)
-		vwakeup(bp->b_vp);
 	pool_put(&bufpool, bp);
 	splx(s);
 

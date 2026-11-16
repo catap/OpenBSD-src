@@ -731,23 +731,17 @@ sr_raid6_addio(struct sr_workunit *wu, int chunk, daddr_t blkno,
 	}
 
 	ccb = sr_ccb_rw(sd, chunk, blkno, len, data, xsflags, ccbflags);
-	if (ccb == NULL) {
-		if (ccbflags & SR_CCBF_FREEBUF)
-			sr_block_put(sd, data, len);
-		return (-1);
-	}
+	if (ccb == NULL)
+		goto bad;
 	if (pbuf || qbuf) {
-		/* XXX - can leak data and ccb on failure. */
 		if (qbuf && gf_premul(gn))
-			return (-1);
+			goto bad;
 
 		/* XXX - should be preallocated? */
 		pqbuf = malloc(sizeof(struct sr_raid6_opaque),
 		    M_DEVBUF, M_ZERO | M_NOWAIT);
-		if (pqbuf == NULL) {
-			sr_ccb_put(ccb);
-			return (-1);
-		}
+		if (pqbuf == NULL)
+			goto bad;
 		pqbuf->pbuf = pbuf;
 		pqbuf->qbuf = qbuf;
 		pqbuf->gn = gn;
@@ -756,6 +750,12 @@ sr_raid6_addio(struct sr_workunit *wu, int chunk, daddr_t blkno,
 	sr_wu_enqueue_ccb(wu, ccb);
 
 	return (0);
+bad:
+	if (ccb)
+		sr_ccb_put(ccb);
+	if (ccbflags & SR_CCBF_FREEBUF)
+		sr_block_put(sd, data, len);
+	return (-1);
 }
 
 /* Perform RAID6 parity calculation.

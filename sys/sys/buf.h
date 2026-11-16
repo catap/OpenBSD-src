@@ -144,7 +144,7 @@ struct buf {
 					/* Function to call upon completion.
 					 * Will be called at splbio(). */
 	void	(*b_iodone)(struct buf *);
-	struct	vnode *b_vp;		/* Device vnode. */
+	struct	vnode *b_vp;		/* Vnode owned until detachment. */
 	int	b_dirtyoff;		/* Offset in buffer of dirty region. */
 	int	b_dirtyend;		/* Offset of end of dirty region. */
 	int	b_validoff;		/* Offset in buffer of valid region. */

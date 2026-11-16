@@ -438,16 +438,21 @@ sr_rw(struct sr_softc *sc, dev_t dev, char *buf, size_t size, daddr_t blkno,
 		b.b_bcount = bufsize;
 		b.b_bufsize = bufsize;
 		b.b_resid = bufsize;
-		b.b_vp = vp;
+		b.b_vnbufs.le_next = NOLIST;
 
-		if ((b.b_flags & B_READ) == 0) {
-			s = splbio();
+		s = splbio();
+		vhold(vp);
+		b.b_vp = vp;
+		if ((b.b_flags & B_READ) == 0)
 			vp->v_numoutput++;
-			splx(s);
-		}
+		splx(s);
 
 		VOP_STRATEGY(vp, &b);
 		biowait(&b);
+
+		s = splbio();
+		brelvp(&b);
+		splx(s);
 
 		if (b.b_flags & B_ERROR) {
 			printf("%s: I/O error %d on dev 0x%x at block %llu\n",
@@ -1976,6 +1981,12 @@ sr_ccb_put(struct sr_ccb *ccb)
 
 	s = splbio();
 
+	if (ccb->ccb_buf.b_vp) {
+		if (!ISSET(ccb->ccb_buf.b_flags, B_READ | B_DONE))
+			vwakeup(ccb->ccb_buf.b_vp);
+		brelvp(&ccb->ccb_buf);
+	}
+
 	ccb->ccb_wu = NULL;
 	ccb->ccb_state = SR_CCB_FREE;
 	ccb->ccb_target = -1;
@@ -2016,14 +2027,15 @@ sr_ccb_rw(struct sr_discipline *sd, int chunk, daddr_t blkno,
 	ccb->ccb_buf.b_iodone = sd->sd_scsi_intr;
 	ccb->ccb_buf.b_proc = curproc;
 	ccb->ccb_buf.b_dev = sc->src_dev_mm;
-	ccb->ccb_buf.b_vp = sc->src_vn;
 	ccb->ccb_buf.b_bq = NULL;
+	ccb->ccb_buf.b_vnbufs.le_next = NOLIST;
 
-	if (!ISSET(ccb->ccb_buf.b_flags, B_READ)) {
-		s = splbio();
+	s = splbio();
+	vhold(sc->src_vn);
+	ccb->ccb_buf.b_vp = sc->src_vn;
+	if (!ISSET(ccb->ccb_buf.b_flags, B_READ))
 		ccb->ccb_buf.b_vp->v_numoutput++;
-		splx(s);
-	}
+	splx(s);
 
 	DNPRINTF(SR_D_DIS, "%s: %s %s ccb "
 	    "b_bcount %ld b_blkno %lld b_flags 0x%0lx b_data %p\n",

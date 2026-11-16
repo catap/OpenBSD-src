@@ -100,8 +100,6 @@ int prtactive = 0;	/* 1 => print out reclaim of active vnodes */
 }
 
 TAILQ_HEAD(freelst, vnode);
-struct freelst vnode_hold_list =	/* list of vnodes referencing buffers */
-    TAILQ_HEAD_INITIALIZER(vnode_hold_list);
 struct freelst vnode_free_list =	/* vnode free list */
     TAILQ_HEAD_INITIALIZER(vnode_free_list);
 
@@ -386,8 +384,6 @@ getnewvnode(enum vtagtype tag, struct mount *mp, const struct vops *vops,
     struct vnode **vpp)
 {
 	struct proc *p = curproc;
-	struct freelst *listhd;
-	static int toggle;
 	struct vnode *vp;
 	int s;
 
@@ -398,37 +394,17 @@ getnewvnode(enum vtagtype tag, struct mount *mp, const struct vops *vops,
 	maxvnodes = maxvnodes < bcstats.numbufs ? bcstats.numbufs
 	    : maxvnodes;
 
-	/*
-	 * We must choose whether to allocate a new vnode or recycle an
-	 * existing one. The criterion for allocating a new one is that
-	 * the total number of vnodes is less than the number desired or
-	 * there are no vnodes on either free list. Generally we only
-	 * want to recycle vnodes that have no buffers associated with
-	 * them, so we look first on the vnode_free_list. If it is empty,
-	 * we next consider vnodes with referencing buffers on the
-	 * vnode_hold_list. The toggle ensures that half the time we
-	 * will use a buffer from the vnode_hold_list, and half the time
-	 * we will allocate a new one unless the list has grown to twice
-	 * the desired size. We are reticent to recycle vnodes from the
-	 * vnode_hold_list because we will lose the identity of all its
-	 * referencing buffers.
-	 */
-	toggle ^= 1;
-	if (numvnodes / 2 > maxvnodes)
-		toggle = 0;
-
 	s = splbio();
-	if ((numvnodes < maxvnodes) ||
-	    ((TAILQ_FIRST(listhd = &vnode_free_list) == NULL) &&
-	    ((TAILQ_FIRST(listhd = &vnode_hold_list) == NULL) || toggle))) {
+	if (numvnodes < maxvnodes || TAILQ_EMPTY(&vnode_free_list)) {
 		splx(s);
 		vp = pool_get(&vnode_pool, PR_WAITOK | PR_ZERO);
 		RBT_INIT(buf_rb_bufs, &vp->v_bufs_tree);
 		cache_tree_init(&vp->v_nc_tree);
 		TAILQ_INIT(&vp->v_cache_dst);
 		numvnodes++;
+		vhold(vp);
 	} else {
-		TAILQ_FOREACH(vp, listhd, v_freelist) {
+		TAILQ_FOREACH(vp, &vnode_free_list, v_freelist) {
 			mtx_enter(&vnode_mtx);
 			if (vp->v_lflag & VXLOCK) {
 				mtx_leave(&vnode_mtx);
@@ -457,8 +433,9 @@ getnewvnode(enum vtagtype tag, struct mount *mp, const struct vops *vops,
 		}
 #endif
 
-		TAILQ_REMOVE(listhd, vp, v_freelist);
+		TAILQ_REMOVE(&vnode_free_list, vp, v_freelist);
 		vp->v_bioflag &= ~VBIOONFREELIST;
+		vhold(vp);
 		splx(s);
 
 		if (vp->v_type != VBAD)
@@ -484,6 +461,10 @@ getnewvnode(enum vtagtype tag, struct mount *mp, const struct vops *vops,
 	*vpp = vp;
 	vp->v_usecount = 1;
 	vp->v_data = NULL;
+	s = splbio();
+	vp->v_bioflag &= ~VBIOERROR;
+	splx(s);
+	vdrop(vp);
 	return (0);
 }
 
@@ -584,7 +565,7 @@ loop:
 		/*
 		 * Alias, but not in use, so flush it out.
 		 */
-		if (vp->v_usecount == 0) {
+		if (vp->v_usecount == 0 && vp->v_holdcnt == 0) {
 			vgonel(vp, p);
 			goto loop;
 		}
@@ -637,7 +618,7 @@ loop:
 		if (dev != vp->v_rdev || type != vp->v_type ||
 		    vp->v_tag != VT_NON)
 			continue;
-		if (vp->v_usecount == 0) {
+		if (vp->v_usecount == 0 && vp->v_holdcnt == 0) {
 			vgonel(vp, p);
 			goto loop;
 		}
@@ -662,7 +643,7 @@ loop:
 int
 vget(struct vnode *vp, int flags)
 {
-	int error, s, onfreelist;
+	int error, s;
 
 	/*
 	 * If the vnode is in the process of being cleaned out for
@@ -685,22 +666,19 @@ vget(struct vnode *vp, int flags)
 	mtx_leave(&vnode_mtx);
 
 	s = splbio();
-	onfreelist = vp->v_bioflag & VBIOONFREELIST;
-	if (vp->v_usecount == 0 && onfreelist) {
-		if (vp->v_holdcnt > 0)
-			TAILQ_REMOVE(&vnode_hold_list, vp, v_freelist);
-		else
-			TAILQ_REMOVE(&vnode_free_list, vp, v_freelist);
+	if (vp->v_bioflag & VBIOONFREELIST) {
+		TAILQ_REMOVE(&vnode_free_list, vp, v_freelist);
 		vp->v_bioflag &= ~VBIOONFREELIST;
 	}
-	splx(s);
-
 	vp->v_usecount++;
+	splx(s);
 	if (flags & LK_TYPE_MASK) {
 		if ((error = vn_lock(vp, flags)) != 0) {
+			s = splbio();
 			vp->v_usecount--;
-			if (vp->v_usecount == 0 && onfreelist)
+			if (vp->v_usecount == 0 && vp->v_holdcnt == 0)
 				vputonfreelist(vp);
+			splx(s);
 		}
 		return (error);
 	}
@@ -728,7 +706,6 @@ void
 vputonfreelist(struct vnode *vp)
 {
 	int s;
-	struct freelst *lst;
 
 	s = splbio();
 #ifdef DIAGNOSTIC
@@ -749,17 +726,11 @@ vputonfreelist(struct vnode *vp)
 #endif
 
 	vp->v_bioflag |= VBIOONFREELIST;
-	vp->v_bioflag &= ~VBIOERROR;
-
-	if (vp->v_holdcnt > 0)
-		lst = &vnode_hold_list;
-	else
-		lst = &vnode_free_list;
 
 	if (vp->v_type == VBAD)
-		TAILQ_INSERT_HEAD(lst, vp, v_freelist);
+		TAILQ_INSERT_HEAD(&vnode_free_list, vp, v_freelist);
 	else
-		TAILQ_INSERT_TAIL(lst, vp, v_freelist);
+		TAILQ_INSERT_TAIL(&vnode_free_list, vp, v_freelist);
 
 	splx(s);
 }
@@ -784,6 +755,8 @@ vput(struct vnode *vp)
 		panic("vput: ref cnt");
 	}
 #endif
+	if (vp->v_usecount == 1)
+		vhold(vp);
 	vp->v_usecount--;
 	KASSERT(vp->v_usecount > 0 || vp->v_uvcount == 0);
 	if (vp->v_usecount > 0) {
@@ -801,14 +774,15 @@ vput(struct vnode *vp)
 	VOP_INACTIVE(vp, p);
 
 	s = splbio();
-	if (vp->v_usecount == 0 && !(vp->v_bioflag & VBIOONFREELIST))
-		vputonfreelist(vp);
+	if (vp->v_usecount == 0)
+		vp->v_bioflag &= ~VBIOERROR;
+	vdrop(vp);
 	splx(s);
 }
 
 /*
  * Vnode release - use for active VNODES.
- * If count drops to zero, call inactive routine and return to freelist.
+ * If count drops to zero, call inactive routine.
  * Returns 0 if it did not sleep.
  */
 int
@@ -827,6 +801,8 @@ vrele(struct vnode *vp)
 		panic("vrele: ref cnt");
 	}
 #endif
+	if (vp->v_usecount == 1)
+		vhold(vp);
 	vp->v_usecount--;
 	if (vp->v_usecount > 0) {
 		return (0);
@@ -843,14 +819,16 @@ vrele(struct vnode *vp)
 #ifdef DIAGNOSTIC
 		vprint("vrele: cannot lock", vp);
 #endif
+		vdrop(vp);
 		return (1);
 	}
 
 	VOP_INACTIVE(vp, p);
 
 	s = splbio();
-	if (vp->v_usecount == 0 && !(vp->v_bioflag & VBIOONFREELIST))
-		vputonfreelist(vp);
+	if (vp->v_usecount == 0)
+		vp->v_bioflag &= ~VBIOERROR;
+	vdrop(vp);
 	splx(s);
 	return (1);
 }
@@ -863,14 +841,9 @@ vhold(struct vnode *vp)
 
 	s = splbio();
 
-	/*
-	 * If it is on the freelist and the hold count is currently
-	 * zero, move it to the hold list.
-	 */
-	if ((vp->v_bioflag & VBIOONFREELIST) &&
-	    vp->v_holdcnt == 0 && vp->v_usecount == 0) {
+	if (vp->v_bioflag & VBIOONFREELIST) {
 		TAILQ_REMOVE(&vnode_free_list, vp, v_freelist);
-		TAILQ_INSERT_TAIL(&vnode_hold_list, vp, v_freelist);
+		vp->v_bioflag &= ~VBIOONFREELIST;
 	}
 	vp->v_holdcnt++;
 
@@ -892,15 +865,8 @@ vdrop(struct vnode *vp)
 
 	vp->v_holdcnt--;
 
-	/*
-	 * If it is on the holdlist and the hold count drops to
-	 * zero, move it to the free list.
-	 */
-	if ((vp->v_bioflag & VBIOONFREELIST) &&
-	    vp->v_holdcnt == 0 && vp->v_usecount == 0) {
-		TAILQ_REMOVE(&vnode_hold_list, vp, v_freelist);
-		TAILQ_INSERT_TAIL(&vnode_free_list, vp, v_freelist);
-	}
+	if (vp->v_holdcnt == 0 && vp->v_usecount == 0)
+		vputonfreelist(vp);
 
 	splx(s);
 }
@@ -1049,6 +1015,8 @@ vclean_start(struct vnode *vp, int flags, struct proc *p)
 {
 	int active, error;
 
+	vhold(vp);
+
 	/*
 	 * Check to see if the vnode is in use.
 	 * If so we have to reference it before we clean it out
@@ -1150,14 +1118,11 @@ vclean_finish(struct vnode *vp, int active)
 	int s;
 
 	if (active) {
+		s = splbio();
 		vp->v_usecount--;
-		if (vp->v_usecount == 0) {
-			s = splbio();
-			if (vp->v_holdcnt > 0)
-				panic("vclean: not clean");
-			vputonfreelist(vp);
-			splx(s);
-		}
+		if (vp->v_usecount == 0)
+			vp->v_bioflag &= ~VBIOERROR;
+		splx(s);
 	}
 
 	mtx_enter(&vnode_mtx);
@@ -1170,10 +1135,11 @@ vclean_finish(struct vnode *vp, int active)
 	mtx_leave(&vnode_mtx);
 	if (do_wakeup)
 		wakeup(vp);
+	vdrop(vp);
 }
 
 /*
- * Recycle an unused vnode to the front of the free list.
+ * Reclaim a vnode with no active users.
  */
 int
 vrecycle(struct vnode *vp, struct proc *p)
@@ -1205,7 +1171,7 @@ vgonel(struct vnode *vp, struct proc *p)
 	struct specinfo *si;
 	struct vnode *vq;
 	struct vnode *vx;
-	int active, s, purgespec = 0;
+	int active, purgespec = 0;
 
 	KASSERT(vp->v_uvcount == 0);
 
@@ -1262,33 +1228,12 @@ vgonel(struct vnode *vp, struct proc *p)
 		purgespec = 1;
 	}
 
-	/*
-	 * If it is on the freelist and not already at the head,
-	 * move it to the head of the list.
-	 */
 	vp->v_type = VBAD;
 
 	if (purgespec) {
 		si = lf_purgespec(&vp->v_specinfo);
 		free(si, M_VNODE, sizeof(*si));
 	}
-
-	/*
-	 * Move onto the free list, unless we were called from
-	 * getnewvnode and we're not on any free list
-	 */
-	s = splbio();
-	if (vp->v_usecount == 0 &&
-	    (vp->v_bioflag & VBIOONFREELIST)) {
-		if (vp->v_holdcnt > 0)
-			panic("vgonel: not clean");
-
-		if (TAILQ_FIRST(&vnode_free_list) != vp) {
-			TAILQ_REMOVE(&vnode_free_list, vp, v_freelist);
-			TAILQ_INSERT_HEAD(&vnode_free_list, vp, v_freelist);
-		}
-	}
-	splx(s);
 
 	vclean_finish(vp, active);
 }
@@ -2140,6 +2085,8 @@ bgetvp(struct vnode *vp, struct buf *bp)
 
 /*
  * Disassociate a buffer from a vnode.
+ * The caller must first remove any lookup-tree entry and finish or transfer
+ * the buffer's I/O accounting on this vnode.
  *
  * Manipulates vnode buffer queues. Must be called at splbio().
  */
@@ -2183,13 +2130,13 @@ buf_replacevnode(struct buf *bp, struct vnode *newvp)
 
 	splassert(IPL_BIO);
 
-	if (oldvp)
-		brelvp(bp);
-
 	if ((bp->b_flags & (B_READ | B_DONE)) == 0) {
 		newvp->v_numoutput++;	/* put it on swapdev */
 		vwakeup(oldvp);
 	}
+
+	if (oldvp)
+		brelvp(bp);
 
 	bgetvp(newvp, bp);
 	bufremvn(bp);
